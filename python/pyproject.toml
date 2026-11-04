@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "screenai-sdk"
+version = "0.1.0"
+description = "Python ctypes bindings for the ScreenAI SDK"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+pillow = ["Pillow>=9"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["screenai*"]
