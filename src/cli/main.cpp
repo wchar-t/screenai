@@ -9,9 +9,9 @@
 namespace {
 
 void PrintUsage() {
-	std::wcerr << L"Usage: screenai.exe <image-path> [--runtime-dir <directory>]\n"
+	std::wcerr << L"Usage: screenai.exe <image-path> [--runtime-dir|-runtime-dir <directory>]\n"
 		L"The fixed 153.5 runtime package beside screenai.dll is used by default.\n"
-		L"An external runtime directory may be set with SCREENAI_RUNTIME_DIR or --runtime-dir.\n";
+		L"An external runtime directory may be set with SCREENAI_RUNTIME_DIR, --runtime-dir, or -runtime-dir.\n";
 }
 
 } // namespace
@@ -37,7 +37,9 @@ int wmain(int argc, wchar_t** argv) {
 	std::wstring runtime_directory;
 
 	if (argc == 4) {
-		if (std::wstring(argv[2]) != L"--runtime-dir") {
+		const std::wstring runtime_option = argv[2];
+
+		if (runtime_option != L"--runtime-dir" && runtime_option != L"-runtime-dir") {
 			PrintUsage();
 
 			return 1;

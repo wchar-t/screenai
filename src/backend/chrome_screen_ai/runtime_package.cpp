@@ -335,7 +335,7 @@ std::string HashFile(const std::filesystem::path& path) {
 		return {};
 
 	Sha256 hash;
-	std::array<uint8_t, HASH_CHUNK_SIZE> buffer{};
+	std::vector<uint8_t> buffer(HASH_CHUNK_SIZE);
 
 	while (file) {
 		file.read(
