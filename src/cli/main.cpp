@@ -10,7 +10,7 @@ namespace {
 
 void PrintUsage() {
 	std::wcerr << L"Usage: screenai.exe <image-path> [--runtime-dir <directory>]\n"
-		L"The embedded runtime is used by default.\n"
+		L"The fixed 153.5 runtime package beside screenai.dll is used by default.\n"
 		L"An external runtime directory may be set with SCREENAI_RUNTIME_DIR or --runtime-dir.\n";
 }
 

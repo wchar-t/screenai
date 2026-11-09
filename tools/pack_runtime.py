@@ -9,6 +9,7 @@ from pathlib import Path
 
 MAGIC = b'SAIPAK1\0'
 FORMAT_VERSION = 1
+RUNTIME_VERSION = '153.5'
 FLAG_NATIVE_LIBRARY = 1
 HEADER = struct.Struct('<8sIIHH32s')
 ENTRY = struct.Struct('<HHQ32s')
@@ -107,22 +108,28 @@ def calculate_package_id(version, files):
     return digest.digest()
 
 
-def write_package(source_directory, output_path, requested_version):
+def write_package(source_directory):
     source_directory = source_directory.resolve(strict=True)
-    output_path = output_path.resolve()
+    manifest_version = read_source_manifest(source_directory)
+
+    if manifest_version != RUNTIME_VERSION:
+        raise ValueError(
+            f'This SDK is locked to ScreenAI {RUNTIME_VERSION}, not {manifest_version}.'
+        )
+
+    version = RUNTIME_VERSION
+    output_path = (
+        Path(__file__).resolve().parents[1] /
+        'runtime' /
+        f'screenai-runtime-{RUNTIME_VERSION}.sai'
+    ).resolve()
+
     try:
         output_path.relative_to(source_directory)
     except ValueError:
         pass
     else:
         raise ValueError('The package output must be outside the runtime source directory.')
-    manifest_version = read_source_manifest(source_directory)
-    version = requested_version or manifest_version
-
-    if version != manifest_version:
-        raise ValueError(
-            f'Requested version {version} does not match manifest version {manifest_version}.'
-        )
 
     files = collect_files(source_directory)
     version_bytes = version.encode('utf-8')
@@ -184,18 +191,12 @@ def write_package(source_directory, output_path, requested_version):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Pack a Chrome ScreenAI runtime directory into one binary asset bundle.'
+        description=f'Pack the fixed ScreenAI {RUNTIME_VERSION} runtime dependency.'
     )
     parser.add_argument('source_directory', type=Path)
-    parser.add_argument('output_file', type=Path)
-    parser.add_argument('--version')
     arguments = parser.parse_args()
 
-    write_package(
-        arguments.source_directory,
-        arguments.output_file,
-        arguments.version,
-    )
+    write_package(arguments.source_directory)
 
 
 if __name__ == '__main__':

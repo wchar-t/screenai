@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 cmake_policy(SET CMP0141 NEW)
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
 
-project(ScreenAI LANGUAGES CXX RC)
+project(ScreenAI LANGUAGES CXX)
 
 if(NOT WIN32)
 	message(FATAL_ERROR "ScreenAI currently supports Windows only.")
@@ -13,34 +13,24 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(SCREENAI_RUNTIME_VERSION "153.5")
 set(
-	SCREENAI_RUNTIME_BUNDLE
-	"${CMAKE_CURRENT_SOURCE_DIR}/runtime/screenai-runtime-153.5.sai"
-	CACHE FILEPATH
-	"ScreenAI runtime package embedded into screenai.dll"
+	SCREENAI_RUNTIME_PACKAGE_NAME
+	"screenai-runtime-${SCREENAI_RUNTIME_VERSION}.sai"
+)
+set(
+	SCREENAI_RUNTIME_PACKAGE
+	"${CMAKE_CURRENT_SOURCE_DIR}/runtime/${SCREENAI_RUNTIME_PACKAGE_NAME}"
 )
 
-get_filename_component(
-	SCREENAI_RUNTIME_BUNDLE
-	"${SCREENAI_RUNTIME_BUNDLE}"
-	ABSOLUTE
-	BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
-)
-
-if(NOT EXISTS "${SCREENAI_RUNTIME_BUNDLE}")
-	message(FATAL_ERROR "ScreenAI runtime bundle not found: ${SCREENAI_RUNTIME_BUNDLE}")
+if(NOT EXISTS "${SCREENAI_RUNTIME_PACKAGE}")
+	message(FATAL_ERROR
+		"Required runtime package not found: ${SCREENAI_RUNTIME_PACKAGE}. "
+		"Create it with: py tools/pack_runtime.py <runtime-source-directory>"
+	)
 endif()
 
-file(TO_CMAKE_PATH "${SCREENAI_RUNTIME_BUNDLE}" SCREENAI_RUNTIME_BUNDLE_RC)
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
-configure_file(
-	src/resources/screenai_runtime.rc.in
-	"${CMAKE_CURRENT_BINARY_DIR}/generated/screenai_runtime.rc"
-	@ONLY
-)
-
 add_library(screenai_sdk SHARED
-	"${CMAKE_CURRENT_BINARY_DIR}/generated/screenai_runtime.rc"
 	src/api/screenai_api.cpp
 	src/backend/chrome_screen_ai/annotation_decoder.cpp
 	src/backend/chrome_screen_ai/chrome_backend.cpp
@@ -51,7 +41,12 @@ add_library(screenai_sdk SHARED
 	src/image/wic_decoder.cpp
 )
 
-target_compile_definitions(screenai_sdk PRIVATE SCREENAI_BUILD)
+set_property(TARGET screenai_sdk APPEND PROPERTY LINK_DEPENDS "${SCREENAI_RUNTIME_PACKAGE}")
+
+target_compile_definitions(screenai_sdk PRIVATE
+	SCREENAI_BUILD
+	SCREENAI_RUNTIME_VERSION=\"${SCREENAI_RUNTIME_VERSION}\"
+)
 target_include_directories(screenai_sdk
 	PUBLIC include
 	PRIVATE src
@@ -64,6 +59,15 @@ if(MSVC)
 		$<$<COMPILE_LANGUAGE:CXX>:/permissive->
 	)
 endif()
+
+add_custom_command(TARGET screenai_sdk POST_BUILD
+	COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:screenai_sdk>/runtime"
+	COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+		"${SCREENAI_RUNTIME_PACKAGE}"
+		"$<TARGET_FILE_DIR:screenai_sdk>/runtime/${SCREENAI_RUNTIME_PACKAGE_NAME}"
+	COMMENT "Copying the required ScreenAI runtime package"
+	VERBATIM
+)
 
 add_executable(screenai src/cli/main.cpp)
 target_link_libraries(screenai PRIVATE screenai_sdk)
@@ -89,5 +93,6 @@ install(TARGETS screenai_sdk screenai
 	LIBRARY DESTINATION bin
 	ARCHIVE DESTINATION lib
 )
+install(FILES "${SCREENAI_RUNTIME_PACKAGE}" DESTINATION bin/runtime)
 install(DIRECTORY include/screenai DESTINATION include)
 install(DIRECTORY python/screenai DESTINATION python)

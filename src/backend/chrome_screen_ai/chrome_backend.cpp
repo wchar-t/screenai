@@ -70,7 +70,7 @@ ChromeBackend::ChromeBackend(
 		if (configured_runtime_directory) {
 			runtime_directory = *configured_runtime_directory;
 		} else {
-			this->state_->runtime_package = runtime_package::Package::LoadEmbedded();
+			this->state_->runtime_package = runtime_package::Package::LoadFixed();
 			runtime_directory = this->state_->runtime_package->ExtractNativeLibraries();
 		}
 

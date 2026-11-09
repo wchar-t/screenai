@@ -1,7 +1,5 @@
 #include "backend/chrome_screen_ai/runtime_package.h"
 
-#include "resources/runtime_resource.h"
-
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -21,10 +19,15 @@
 #include <utility>
 #include <vector>
 
+#ifndef SCREENAI_RUNTIME_VERSION
+#error SCREENAI_RUNTIME_VERSION must be defined by CMake.
+#endif
+
 namespace screenai::backend::runtime_package {
 namespace {
 
 constexpr char PACKAGE_MAGIC[] = "SAIPAK1";
+constexpr char RUNTIME_VERSION[] = SCREENAI_RUNTIME_VERSION;
 constexpr uint32_t PACKAGE_FORMAT_VERSION = 1;
 constexpr uint16_t FLAG_NATIVE_LIBRARY = 1;
 constexpr size_t SHA256_LENGTH = 32;
@@ -143,7 +146,7 @@ private:
 
 void RequireBytes(size_t cursor, size_t length, size_t total) {
 	if (cursor > total || length > total - cursor)
-		throw std::runtime_error("The embedded ScreenAI runtime package is truncated.");
+		throw std::runtime_error("The ScreenAI runtime package is truncated.");
 }
 
 
@@ -183,7 +186,7 @@ std::string NormalizePath(std::string_view path) {
 		if (character == '/' || character == '\\') {
 			if (segment_is_empty)
 				return {};
-			if (key.size() >= 1 && key.back() == '.')
+			if (key.back() == '.')
 				return {};
 			key.push_back('/');
 			segment_is_empty = true;
@@ -216,6 +219,43 @@ std::string Hex(const std::string& bytes) {
 	}
 
 	return result;
+}
+
+
+HMODULE GetSdkModule() {
+	static const int module_anchor = 0;
+	HMODULE module = nullptr;
+
+	if (!GetModuleHandleExW(
+		GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		reinterpret_cast<LPCWSTR>(&module_anchor),
+		&module
+	))
+		throw std::runtime_error("Could not locate the ScreenAI SDK module.");
+
+	return module;
+}
+
+
+std::filesystem::path GetModulePath(HMODULE module) {
+	std::vector<wchar_t> buffer(512);
+
+	while (true) {
+		const DWORD length = GetModuleFileNameW(
+			module,
+			buffer.data(),
+			static_cast<DWORD>(buffer.size())
+		);
+
+		if (length == 0)
+			throw std::runtime_error("Could not read the ScreenAI SDK module path.");
+		if (length < buffer.size())
+			return std::filesystem::path(std::wstring(buffer.data(), length));
+		if (buffer.size() >= 32768)
+			throw std::runtime_error("The ScreenAI SDK module path is too long.");
+
+		buffer.resize(std::min<size_t>(buffer.size() * 2, 32768));
+	}
 }
 
 
@@ -359,57 +399,102 @@ void WriteAssetAtomically(
 	}
 }
 
-
-HMODULE GetPackageModule() {
-	static const int module_anchor = 0;
-	HMODULE module = nullptr;
-
-	if (!GetModuleHandleExW(
-		GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-		reinterpret_cast<LPCWSTR>(&module_anchor),
-		&module
-	))
-		throw std::runtime_error("Could not locate the ScreenAI SDK module.");
-
-	return module;
-}
-
 } // namespace
 
 
-std::shared_ptr<const Package> Package::LoadEmbedded() {
+struct Package::FileMapping {
+	HANDLE file = INVALID_HANDLE_VALUE;
+	HANDLE mapping = nullptr;
+	const uint8_t* data = nullptr;
+	size_t size = 0;
+
+	~FileMapping() {
+		if (this->data)
+			UnmapViewOfFile(this->data);
+		if (this->mapping)
+			CloseHandle(this->mapping);
+		if (this->file != INVALID_HANDLE_VALUE)
+			CloseHandle(this->file);
+	}
+};
+
+
+std::shared_ptr<const Package> Package::LoadFixed() {
 	static const std::shared_ptr<const Package> package = []() {
-		const HMODULE module = GetPackageModule();
-		const HRSRC resource = FindResourceW(
-			module,
-			MAKEINTRESOURCEW(IDR_SCREENAI_RUNTIME),
-			MAKEINTRESOURCEW(10)
+		const HMODULE module = GetSdkModule();
+		const std::filesystem::path package_path =
+			GetModulePath(module).parent_path() /
+			L"runtime" /
+			std::filesystem::u8path(
+				std::string("screenai-runtime-") + RUNTIME_VERSION + ".sai"
+			);
+		std::unique_ptr<FileMapping> mapping = std::make_unique<FileMapping>();
+
+		mapping->file = CreateFileW(
+			package_path.c_str(),
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr
 		);
 
-		if (!resource)
-			throw std::runtime_error("The ScreenAI SDK has no embedded runtime package.");
+		if (mapping->file == INVALID_HANDLE_VALUE) {
+			const DWORD error = GetLastError();
 
-		const DWORD size = SizeofResource(module, resource);
-		const HGLOBAL loaded_resource = LoadResource(module, resource);
-		const void* data = loaded_resource ? LockResource(loaded_resource) : nullptr;
+			throw std::runtime_error(
+				"The required ScreenAI runtime package could not be opened at " +
+				package_path.u8string() +
+				" (Win32 error " +
+				std::to_string(error) + ")."
+			);
+		}
 
-		if (!size || !data)
-			throw std::runtime_error("Could not read the embedded ScreenAI runtime package.");
+		LARGE_INTEGER file_size{};
 
-		return std::shared_ptr<const Package>(
-			new Package(static_cast<const uint8_t*>(data), size)
+		if (!GetFileSizeEx(mapping->file, &file_size) || file_size.QuadPart <= 0 ||
+			static_cast<uint64_t>(file_size.QuadPart) > std::numeric_limits<size_t>::max()) {
+			throw std::runtime_error("The required ScreenAI runtime package has an invalid size.");
+		}
+
+		mapping->mapping = CreateFileMappingW(
+			mapping->file,
+			nullptr,
+			PAGE_READONLY,
+			0,
+			0,
+			nullptr
 		);
+
+		if (!mapping->mapping)
+			throw std::runtime_error("Could not map the required ScreenAI runtime package.");
+
+		mapping->data = static_cast<const uint8_t*>(
+			MapViewOfFile(mapping->mapping, FILE_MAP_READ, 0, 0, 0)
+		);
+
+		if (!mapping->data)
+			throw std::runtime_error("Could not read the required ScreenAI runtime package.");
+
+		mapping->size = static_cast<size_t>(file_size.QuadPart);
+
+		return std::shared_ptr<const Package>(new Package(std::move(mapping)));
 	}();
 
 	return package;
 }
 
 
-Package::Package(const uint8_t* data, size_t size)
-	: data_(data),
-	  size_(size) {
+Package::Package(std::unique_ptr<FileMapping> mapping)
+	: mapping_(std::move(mapping)),
+	  data_(this->mapping_->data),
+	  size_(this->mapping_->size) {
 	this->Parse();
 }
+
+
+Package::~Package() = default;
 
 
 void Package::Parse() {
@@ -417,7 +502,7 @@ void Package::Parse() {
 	RequireBytes(cursor, 8, this->size_);
 
 	if (std::memcmp(this->data_, PACKAGE_MAGIC, 8) != 0)
-		throw std::runtime_error("The embedded ScreenAI runtime package has an invalid signature.");
+		throw std::runtime_error("The ScreenAI runtime package has an invalid signature.");
 
 	cursor += 8;
 	const uint32_t format_version = ReadValue<uint32_t>(this->data_, cursor, this->size_);
@@ -432,19 +517,20 @@ void Package::Parse() {
 	);
 
 	if (format_version != PACKAGE_FORMAT_VERSION || reserved != 0 || file_count == 0)
-		throw std::runtime_error("The embedded ScreenAI runtime package header is unsupported.");
+		throw std::runtime_error("The ScreenAI runtime package header is unsupported.");
 
 	this->version_ = ReadString(this->data_, cursor, version_length, this->size_);
 
-	const size_t minimum_entry_size = 2 + 2 + 8 + SHA256_LENGTH + 1;
-	if (file_count > (this->size_ - cursor) / minimum_entry_size)
-		throw std::runtime_error("The embedded ScreenAI runtime package has an invalid file count.");
-
-	if (this->version_.empty() ||
-		!std::all_of(this->version_.begin(), this->version_.end(), [](unsigned char character) {
+	if (this->version_ != RUNTIME_VERSION)
+		throw std::runtime_error("The ScreenAI runtime package version does not match the locked SDK version.");
+	if (!std::all_of(this->version_.begin(), this->version_.end(), [](unsigned char character) {
 			return std::isalnum(character) || character == '.' || character == '_' || character == '-';
 		}))
-		throw std::runtime_error("The embedded ScreenAI runtime package has an invalid version.");
+		throw std::runtime_error("The ScreenAI runtime package has an invalid version.");
+
+	const size_t minimum_entry_size = 2 + 2 + 8 + SHA256_LENGTH + 1;
+	if (file_count > (this->size_ - cursor) / minimum_entry_size)
+		throw std::runtime_error("The ScreenAI runtime package has an invalid file count.");
 
 	Sha256 package_hash;
 	package_hash.Update(
@@ -472,11 +558,11 @@ void Package::Parse() {
 		const std::string key = NormalizePath(path);
 
 		if (key.empty())
-			throw std::runtime_error("The embedded ScreenAI runtime contains an unsafe file path.");
+			throw std::runtime_error("The ScreenAI runtime contains an unsafe file path.");
 		if (flags & ~FLAG_NATIVE_LIBRARY)
-			throw std::runtime_error("The embedded ScreenAI runtime contains unsupported file flags.");
+			throw std::runtime_error("The ScreenAI runtime contains unsupported file flags.");
 		if (file_size > std::numeric_limits<uint32_t>::max())
-			throw std::runtime_error("An embedded ScreenAI runtime file exceeds the callback size limit.");
+			throw std::runtime_error("A ScreenAI runtime file exceeds the callback size limit.");
 		RequireBytes(cursor, static_cast<size_t>(file_size), this->size_);
 
 		const char* file_data = reinterpret_cast<const char*>(this->data_ + cursor);
@@ -484,7 +570,7 @@ void Package::Parse() {
 		file_hash.Update(this->data_ + cursor, static_cast<size_t>(file_size));
 
 		if (file_hash.Finish() != expected_digest)
-			throw std::runtime_error("An embedded ScreenAI runtime file failed its SHA-256 check.");
+			throw std::runtime_error("A ScreenAI runtime file failed its SHA-256 check.");
 
 		const std::array<uint8_t, sizeof(file_size)> encoded_size = {
 			static_cast<uint8_t>(file_size),
@@ -510,7 +596,7 @@ void Package::Parse() {
 		entry.is_native_library = (flags & FLAG_NATIVE_LIBRARY) != 0;
 
 		if (!this->files_.emplace(key, std::move(entry)).second)
-			throw std::runtime_error("The embedded ScreenAI runtime contains duplicate paths.");
+			throw std::runtime_error("The ScreenAI runtime contains duplicate paths.");
 
 		if (flags & FLAG_NATIVE_LIBRARY) {
 			const size_t separator_position = path.find_last_of("/\\");
@@ -520,7 +606,7 @@ void Package::Parse() {
 			const std::string name_key = NormalizePath(file_name);
 
 			if (!native_names.emplace(name_key, file_name).second)
-				throw std::runtime_error("The embedded ScreenAI runtime has duplicate DLL filenames.");
+				throw std::runtime_error("The ScreenAI runtime has duplicate DLL filenames.");
 
 			this->native_library_paths_.push_back(path);
 		}
@@ -529,12 +615,12 @@ void Package::Parse() {
 	}
 
 	if (cursor != this->size_ || package_hash.Finish() != expected_package_id)
-		throw std::runtime_error("The embedded ScreenAI runtime package failed its integrity check.");
+		throw std::runtime_error("The ScreenAI runtime package failed its integrity check.");
 
 	const auto primary_library = this->files_.find("chrome_screen_ai.dll");
 
 	if (primary_library == this->files_.end() || !primary_library->second.is_native_library)
-		throw std::runtime_error("The embedded runtime package has no native chrome_screen_ai.dll.");
+		throw std::runtime_error("The ScreenAI runtime package has no native chrome_screen_ai.dll.");
 
 	this->package_id_ = Hex(expected_package_id);
 }
@@ -567,7 +653,7 @@ const AssetView* Package::FindFile(std::string_view path) const {
 
 std::filesystem::path Package::ExtractNativeLibraries() const {
 	if (this->native_library_paths_.empty())
-		throw std::runtime_error("The embedded ScreenAI runtime has no native DLLs.");
+		throw std::runtime_error("The ScreenAI runtime package has no native DLLs.");
 
 	const std::filesystem::path directory = GetCacheDirectory(
 		this->version_,
@@ -606,7 +692,7 @@ std::filesystem::path Package::ExtractNativeLibraries() const {
 	const std::filesystem::path primary_library = directory / L"chrome_screen_ai.dll";
 
 	if (!std::filesystem::is_regular_file(primary_library, error) || error)
-		throw std::runtime_error("The embedded runtime package has no chrome_screen_ai.dll.");
+		throw std::runtime_error("The ScreenAI runtime package has no chrome_screen_ai.dll.");
 
 	return directory;
 }

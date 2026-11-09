@@ -1,17 +1,23 @@
 # Runtime setup
 
-The SDK DLL is `screenai.dll`. It embeds the ScreenAI 153.5 runtime package, including its native DLLs and model/data files. With the default configuration, the SDK does not read files from a Chrome installation.
+The SDK DLL is `screenai.dll`. It requires the exact sidecar package `runtime/screenai-runtime-153.5.sai`, located under the same directory as the DLL. The SDK searches only that fixed path and checks that the package version is 153.5.
 
-When initialized without a runtime path or `SCREENAI_RUNTIME_DIR`, the SDK reads model/data files directly from the embedded package through the ScreenAI file callbacks. It extracts only the native DLLs to `%TMP%\chrome_screen_ai_<version>_<package-id>` so Windows can load them. The cache is reused when the extracted DLLs match their packaged SHA-256 hashes; a changed or incomplete cache entry is replaced.
+The package remains a deployment dependency; it is not embedded in `screenai.dll`. The loader memory-maps the package and serves model/data files directly from it through ScreenAI's file callbacks. It extracts only native DLLs to `%TMP%\chrome_screen_ai_<version>_<package-id>` so Windows can load them. Existing extracted DLLs are reused when their SHA-256 hashes match the package.
 
-Set the environment variable or pass a directory to use an external runtime instead:
+CMake requires the fixed package at `runtime/screenai-runtime-153.5.sai`, copies it under the build output's `runtime` directory beside `screenai.dll`, and installs it under `bin/runtime`. Include that `runtime` folder when distributing the SDK DLL.
+
+Generate the local package from the matching Chrome ScreenAI 153.5 runtime directory:
+
+    py tools/pack_runtime.py 'C:\path\to\screen_ai\153.5'
+
+The packer accepts only the source directory. It checks that `manifest.json` reports version 153.5 and writes the fixed filename under the repository's `runtime` directory. That directory is ignored by Git.
+
+For testing with an external runtime, set the environment variable or pass a directory:
 
     $env:SCREENAI_RUNTIME_DIR = 'C:\path\to\screen_ai\153.4'
 
     .\screenai.exe .\scan.png --runtime-dir 'C:\path\to\screen_ai\153.4'
 
-The C++ wrapper accepts the same directory in its constructor. Python accepts it with `Recognizer(runtime_dir=...)`. An explicit directory or environment variable takes precedence over the embedded package and must contain `chrome_screen_ai.dll` plus matching model files.
-
-The embedded package is generated with `tools/pack_runtime.py` from a runtime directory containing `manifest.json` and `chrome_screen_ai.dll`. CMake embeds the selected archive into `screenai.dll`; set `SCREENAI_RUNTIME_BUNDLE` at configure time to use a different package.
+The C++ wrapper accepts the same directory in its constructor. Python accepts it with `Recognizer(runtime_dir=...)`. An explicit directory or environment variable takes precedence over the fixed sidecar package and must contain `chrome_screen_ai.dll` plus matching model files.
 
 This adapter supports one active recognizer per process because the recovered ScreenAI model callbacks are process-global. Recognition calls through one recognizer are serialized by the SDK.

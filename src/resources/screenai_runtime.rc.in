@@ -1,3 +1,0 @@
-#include "resources/runtime_resource.h"
-
-IDR_SCREENAI_RUNTIME RCDATA "@SCREENAI_RUNTIME_BUNDLE_RC@"

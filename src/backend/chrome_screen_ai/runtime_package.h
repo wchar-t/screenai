@@ -19,7 +19,9 @@ struct AssetView {
 
 class Package final {
 public:
-	static std::shared_ptr<const Package> LoadEmbedded();
+	static std::shared_ptr<const Package> LoadFixed();
+
+	~Package();
 
 	const std::string& version() const;
 	const std::string& package_id() const;
@@ -27,16 +29,18 @@ public:
 	std::filesystem::path ExtractNativeLibraries() const;
 
 private:
+	struct FileMapping;
 	struct Entry {
 		AssetView asset;
 		std::string digest;
 		bool is_native_library = false;
 	};
 
-	Package(const uint8_t* data, size_t size);
+	explicit Package(std::unique_ptr<FileMapping> mapping);
 
 	void Parse();
 
+	std::unique_ptr<FileMapping> mapping_;
 	const uint8_t* data_ = nullptr;
 	size_t size_ = 0;
 	std::string version_;
