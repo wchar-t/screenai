@@ -77,3 +77,6 @@ pip-wheel-metadata/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Bundled ScreenAI runtime assets are kept locally, not committed.
+/runtime/

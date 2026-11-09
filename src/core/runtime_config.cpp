@@ -8,7 +8,9 @@
 
 namespace screenai::core {
 
-std::filesystem::path ResolveRuntimeDirectory(const wchar_t* configured_directory) {
+std::optional<std::filesystem::path> ResolveRuntimeDirectory(
+	const wchar_t* configured_directory
+) {
 	std::filesystem::path directory;
 
 	if (configured_directory && *configured_directory) {
@@ -17,7 +19,7 @@ std::filesystem::path ResolveRuntimeDirectory(const wchar_t* configured_director
 		const DWORD required = GetEnvironmentVariableW(L"SCREENAI_RUNTIME_DIR", nullptr, 0);
 
 		if (required == 0)
-			throw std::runtime_error("Set SCREENAI_RUNTIME_DIR or pass a runtime directory.");
+			return std::nullopt;
 
 		std::vector<wchar_t> value(required);
 		const DWORD length = GetEnvironmentVariableW(

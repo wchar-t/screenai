@@ -1,26 +1,34 @@
 # ScreenAI SDK
 
-ScreenAI SDK is a Windows x64 C++ library for running image OCR through the ScreenAI runtime installed with Chrome. It provides one shared implementation for C++ applications, Python callers, and the included command-line program.
-
-The project does not include Chrome's runtime DLL or model files. Point the SDK at the directory containing them with `SCREENAI_RUNTIME_DIR` or the `--runtime-dir` option.
+ScreenAI SDK is a Windows x64 C++ library for running image OCR through the ScreenAI runtime. The SDK DLL embeds the ScreenAI 153.5 runtime package, so applications do not need to use a Chrome installation. The C++ API, Python binding, and CLI all use the same shared implementation.
 
 ## Build
 
 Requirements: Windows 10 or later, CMake 3.25 or later, and a Visual Studio 2022 C++ toolchain.
 
-From a Visual Studio developer PowerShell:
+The repository includes `runtime/screenai-runtime-153.5.sai`, a package made from the ScreenAI 153.5 runtime directory. CMake embeds it into `screenai.dll`.
 
     cmake -S . -B build -A x64
     cmake --build build --config Release
 
-The build produces `screenai.exe`, `screenai.dll`, and the `screenai.lib` import library. The executable and SDK DLL are placed together in `build/Release` for a multi-configuration generator.
+The build produces `screenai.exe`, `screenai.dll`, and the `screenai.lib` import library. The executable and SDK DLL are placed together in `build/Release` for a multi-configuration generator. The SDK DLL is large because it contains the runtime assets.
+
+To create a package from another runtime directory:
+
+    py tools/pack_runtime.py "C:\path\to\screen_ai\153.5" runtime\screenai-runtime-153.5.sai
+
+Then configure with `-DSCREENAI_RUNTIME_BUNDLE=<path-to-package>`.
 
 ## Run OCR
 
-Set the runtime directory and pass an image path:
+The embedded runtime is used by default:
 
-    $env:SCREENAI_RUNTIME_DIR = 'C:\path\to\screen_ai\153.4'
     .\build\Release\screenai.exe .\sample.png
+
+To use an external runtime directory instead, pass it on the command line or set the environment variable:
+
+    .\build\Release\screenai.exe .\sample.png --runtime-dir 'C:\path\to\screen_ai\153.4'
+    $env:SCREENAI_RUNTIME_DIR = 'C:\path\to\screen_ai\153.4'
 
 The image is decoded with Windows Imaging Component, scaled to the runtime's maximum dimension when needed, and converted to BGRA pixels before OCR.
 
@@ -34,10 +42,10 @@ See `examples/cpp/ocr_image.cpp` and `docs/runtime.md`.
 
 ## Use from Python
 
-The `python/screenai` package calls the same DLL through `ctypes`. Build the SDK first, then make `screenai.dll` available next to the package or set `SCREENAI_SDK_DLL`. The Chrome runtime location can be passed to `Recognizer` or supplied through `SCREENAI_RUNTIME_DIR`.
+The `python/screenai` package calls the same DLL through `ctypes`. Build the SDK first, then make `screenai.dll` available next to the package or set `SCREENAI_SDK_DLL`. The embedded runtime is used unless `runtime_dir` or `SCREENAI_RUNTIME_DIR` selects an external runtime.
 
 The optional Pillow helper accepts a Pillow image and forwards its RGBA pixels to the SDK. See `python/README.md`.
 
 ## Compatibility
 
-The recovered Chrome ABI and bitmap layout were verified against the ScreenAI component in Chrome 153.4 on Windows x64. The ABI is private to Chrome and can change between component versions. See `docs/compatibility.md` before using a different runtime.
+The embedded asset package comes from ScreenAI 153.5. The recovered Chrome ABI and bitmap layout were verified against Chrome 153.4 on Windows x64; compatibility with 153.5 has not yet been verified. See `docs/compatibility.md`.

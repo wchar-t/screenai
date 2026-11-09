@@ -3,9 +3,11 @@
 #include "backend/chrome_screen_ai/abi_v153.h"
 #include "backend/chrome_screen_ai/annotation_decoder.h"
 #include "backend/chrome_screen_ai/model_files.h"
+#include "backend/chrome_screen_ai/runtime_package.h"
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -51,36 +53,47 @@ chrome153::Exports LoadExports(HMODULE library) {
 
 struct ChromeBackend::State {
 	chrome153::Exports exports;
+	std::shared_ptr<const runtime_package::Package> runtime_package;
 	uint32_t max_image_dimension = 0;
 	bool model_callbacks_registered = false;
 	bool initialized = false;
 };
 
 
-ChromeBackend::ChromeBackend(const std::filesystem::path& runtime_directory)
+ChromeBackend::ChromeBackend(
+	const std::optional<std::filesystem::path>& configured_runtime_directory
+)
 	: state_(new State()) {
-	const std::filesystem::path library_path = runtime_directory / L"chrome_screen_ai.dll";
-
-	this->library_ = LoadLibraryExW(
-		library_path.c_str(),
-		nullptr,
-		LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
-	);
-
-	if (!this->library_) {
-		delete this->state_;
-		this->state_ = nullptr;
-
-		throw std::runtime_error(
-			"Could not load chrome_screen_ai.dll (Win32 error " +
-			std::to_string(GetLastError()) + ")."
-		);
-	}
-
 	try {
+		std::filesystem::path runtime_directory;
+
+		if (configured_runtime_directory) {
+			runtime_directory = *configured_runtime_directory;
+		} else {
+			this->state_->runtime_package = runtime_package::Package::LoadEmbedded();
+			runtime_directory = this->state_->runtime_package->ExtractNativeLibraries();
+		}
+
+		const std::filesystem::path library_path = runtime_directory / L"chrome_screen_ai.dll";
+		this->library_ = LoadLibraryExW(
+			library_path.c_str(),
+			nullptr,
+			LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+		);
+
+		if (!this->library_)
+			throw std::runtime_error(
+				"Could not load chrome_screen_ai.dll (Win32 error " +
+				std::to_string(GetLastError()) + ")."
+			);
+
 		this->state_->exports = LoadExports(this->library_);
 
-		if (!model_files::RegisterRuntimeDirectory(runtime_directory))
+		const bool callbacks_registered = this->state_->runtime_package
+			? model_files::RegisterRuntimePackage(this->state_->runtime_package)
+			: model_files::RegisterRuntimeDirectory(runtime_directory);
+
+		if (!callbacks_registered)
 			throw std::runtime_error("Only one ScreenAI recognizer may be active in this process.");
 
 		this->state_->model_callbacks_registered = true;
@@ -111,7 +124,6 @@ ChromeBackend::ChromeBackend(const std::filesystem::path& runtime_directory)
 	}
 }
 
-
 ChromeBackend::~ChromeBackend() {
 	this->Release();
 }
@@ -122,7 +134,7 @@ void ChromeBackend::Release() noexcept {
 		if (this->state_->initialized && this->state_->exports.uninitialize)
 			this->state_->exports.uninitialize();
 		if (this->state_->model_callbacks_registered)
-			model_files::UnregisterRuntimeDirectory();
+			model_files::UnregisterRuntimeSource();
 
 		delete this->state_;
 		this->state_ = nullptr;

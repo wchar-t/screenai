@@ -6,12 +6,13 @@
 #include "core/result.h"
 
 #include <filesystem>
+#include <optional>
 
 namespace screenai::core {
 
 class Recognizer {
 public:
-	explicit Recognizer(const std::filesystem::path& runtime_directory);
+	explicit Recognizer(const std::optional<std::filesystem::path>& runtime_directory);
 
 	uint32_t GetMaxImageDimension() const;
 	OcrResult RecognizeFile(const std::filesystem::path& image_path);

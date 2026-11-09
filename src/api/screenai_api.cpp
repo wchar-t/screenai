@@ -10,11 +10,14 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 struct screenai_recognizer {
-	explicit screenai_recognizer(const std::filesystem::path& runtime_directory)
+	explicit screenai_recognizer(
+		const std::optional<std::filesystem::path>& runtime_directory
+	)
 		: implementation(std::make_unique<screenai::core::Recognizer>(runtime_directory)) {}
 
 	std::unique_ptr<screenai::core::Recognizer> implementation;
@@ -103,7 +106,8 @@ screenai_status SCREENAI_CALL screenai_create(
 	*out_recognizer = nullptr;
 
 	try {
-		const std::filesystem::path directory = screenai::core::ResolveRuntimeDirectory(runtime_dir);
+		const std::optional<std::filesystem::path> directory =
+			screenai::core::ResolveRuntimeDirectory(runtime_dir);
 
 		*out_recognizer = new screenai_recognizer(directory);
 

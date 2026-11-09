@@ -4,7 +4,7 @@
 
 namespace screenai::core {
 
-Recognizer::Recognizer(const std::filesystem::path& runtime_directory)
+Recognizer::Recognizer(const std::optional<std::filesystem::path>& runtime_directory)
 	: backend_(runtime_directory) {}
 
 

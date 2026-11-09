@@ -7,6 +7,7 @@
 #include <Windows.h>
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -20,7 +21,7 @@ public:
 
 class ChromeBackend {
 public:
-	explicit ChromeBackend(const std::filesystem::path& runtime_directory);
+	explicit ChromeBackend(const std::optional<std::filesystem::path>& runtime_directory);
 	~ChromeBackend();
 
 	ChromeBackend(const ChromeBackend&) = delete;

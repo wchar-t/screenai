@@ -1,10 +1,10 @@
 # Python bindings
 
-This package is a small `ctypes` wrapper around the same `screenai.dll` used by the C++ API and CLI. It does not load Chrome's `chrome_screen_ai.dll` directly.
+This package is a small `ctypes` wrapper around the same `screenai.dll` used by the C++ API and CLI. It does not load Chrome's `chrome_screen_ai.dll` directly. The embedded ScreenAI 153.5 package is used by default, without requiring a Chrome installation.
 
 Install the binding from this directory with `pip install .`. Install Pillow support with `pip install '.[pillow]'`.
 
-Make `screenai.dll` available next to this package or set `SCREENAI_SDK_DLL` to its full path. Set `SCREENAI_RUNTIME_DIR` to the Chrome ScreenAI runtime directory, or pass `runtime_dir` when creating a recognizer.
+Make `screenai.dll` available next to this package or set `SCREENAI_SDK_DLL` to its full path. To use an external ScreenAI runtime instead of the embedded package, set `SCREENAI_RUNTIME_DIR` or pass `runtime_dir` when creating a recognizer.
 
     from screenai import Recognizer
     from screenai.pil import recognize_pil
