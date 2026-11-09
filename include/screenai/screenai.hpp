@@ -20,12 +20,10 @@ public:
 
 class Recognizer {
 public:
-	explicit Recognizer(const std::wstring& runtime_dir = {}) {
+	Recognizer() {
 		char error[1024]{};
-		const wchar_t* path = runtime_dir.empty() ? nullptr : runtime_dir.c_str();
 
 		const screenai_status status = screenai_create(
-			path,
 			&this->recognizer_,
 			error,
 			sizeof(error)

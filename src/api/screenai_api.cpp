@@ -2,23 +2,18 @@
 
 #include "backend/chrome_screen_ai/chrome_backend.h"
 #include "core/recognizer.h"
-#include "core/runtime_config.h"
 #include "image/wic_decoder.h"
 
 #include <cstring>
-#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <new>
-#include <optional>
 #include <stdexcept>
 #include <string>
 
 struct screenai_recognizer {
-	explicit screenai_recognizer(
-		const std::optional<std::filesystem::path>& runtime_directory
-	)
-		: implementation(std::make_unique<screenai::core::Recognizer>(runtime_directory)) {}
+	screenai_recognizer()
+		: implementation(std::make_unique<screenai::core::Recognizer>()) {}
 
 	std::unique_ptr<screenai::core::Recognizer> implementation;
 	std::mutex mutex;
@@ -92,7 +87,6 @@ screenai_status HandleProcessingError(
 extern "C" {
 
 screenai_status SCREENAI_CALL screenai_create(
-	const wchar_t* runtime_dir,
 	screenai_recognizer** out_recognizer,
 	char* error_message,
 	size_t error_capacity
@@ -106,10 +100,7 @@ screenai_status SCREENAI_CALL screenai_create(
 	*out_recognizer = nullptr;
 
 	try {
-		const std::optional<std::filesystem::path> directory =
-			screenai::core::ResolveRuntimeDirectory(runtime_dir);
-
-		*out_recognizer = new screenai_recognizer(directory);
+		*out_recognizer = new screenai_recognizer();
 
 		return SCREENAI_STATUS_OK;
 	} catch (const std::bad_alloc&) {

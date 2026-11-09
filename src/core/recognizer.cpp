@@ -4,8 +4,7 @@
 
 namespace screenai::core {
 
-Recognizer::Recognizer(const std::optional<std::filesystem::path>& runtime_directory)
-	: backend_(runtime_directory) {}
+Recognizer::Recognizer() = default;
 
 
 uint32_t Recognizer::GetMaxImageDimension() const {

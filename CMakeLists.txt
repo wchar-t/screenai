@@ -37,7 +37,6 @@ add_library(screenai_sdk SHARED
 	src/backend/chrome_screen_ai/model_files.cpp
 	src/backend/chrome_screen_ai/runtime_package.cpp
 	src/core/recognizer.cpp
-	src/core/runtime_config.cpp
 	src/image/wic_decoder.cpp
 )
 

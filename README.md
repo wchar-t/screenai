@@ -19,14 +19,9 @@ The build produces `screenai.exe`, `screenai.dll`, and the `screenai.lib` import
 
 ## Run OCR
 
-The SDK loads `runtime/screenai-runtime-153.5.sai` relative to `screenai.dll` by default:
+The SDK loads the fixed `runtime/screenai-runtime-153.5.sai` package relative to `screenai.dll`:
 
     .\build\Release\screenai.exe .\sample.png
-
-To use an external runtime directory for testing, pass it on the command line or set the environment variable:
-
-    .\build\Release\screenai.exe .\sample.png --runtime-dir 'C:\path\to\screen_ai\153.4'
-    $env:SCREENAI_RUNTIME_DIR = 'C:\path\to\screen_ai\153.4'
 
 The image is decoded with Windows Imaging Component, scaled to the runtime's maximum dimension when needed, and converted to BGRA pixels before OCR.
 
@@ -40,7 +35,7 @@ See `examples/cpp/ocr_image.cpp` and `docs/runtime.md`.
 
 ## Use from Python
 
-The `python/screenai` package calls the same DLL through `ctypes`. Build the SDK first, then make `screenai.dll` available next to the package or set `SCREENAI_SDK_DLL`. Keep the fixed `runtime/screenai-runtime-153.5.sai` dependency beside the DLL. `runtime_dir` or `SCREENAI_RUNTIME_DIR` can select an external runtime for testing.
+The `python/screenai` package calls the same DLL through `ctypes`. Build the SDK first, then make `screenai.dll` available next to the package or set `SCREENAI_SDK_DLL`. Keep the fixed `runtime/screenai-runtime-153.5.sai` dependency beside the DLL.
 
 The optional Pillow helper accepts a Pillow image and forwards its RGBA pixels to the SDK. See `python/README.md`.
 

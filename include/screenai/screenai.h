@@ -38,7 +38,6 @@ typedef enum screenai_pixel_format {
 } screenai_pixel_format;
 
 SCREENAI_API screenai_status SCREENAI_CALL screenai_create(
-	const wchar_t* runtime_dir,
 	screenai_recognizer** out_recognizer,
 	char* error_message,
 	size_t error_capacity

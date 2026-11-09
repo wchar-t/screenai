@@ -37,7 +37,7 @@ def _load_library():
 
 
 class Recognizer:
-    def __init__(self, runtime_dir=None):
+    def __init__(self):
         if os.name != 'nt':
             raise OSError('ScreenAI currently supports Windows only.')
 
@@ -46,10 +46,8 @@ class Recognizer:
 
         self._handle = ctypes.c_void_p()
         error = ctypes.create_string_buffer(1024)
-        runtime_path = os.fsdecode(os.fspath(runtime_dir)) if runtime_dir is not None else None
 
         status = self._library.screenai_create(
-            runtime_path,
             ctypes.byref(self._handle),
             error,
             len(error),
@@ -61,7 +59,6 @@ class Recognizer:
         char_pointer = ctypes.POINTER(ctypes.c_char)
 
         self._library.screenai_create.argtypes = [
-            ctypes.c_wchar_p,
             ctypes.POINTER(ctypes.c_void_p),
             char_pointer,
             ctypes.c_size_t,

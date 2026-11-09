@@ -1,13 +1,12 @@
 #include "backend/chrome_screen_ai/chrome_backend.h"
 
-#include "backend/chrome_screen_ai/abi_v153.h"
+#include "backend/chrome_screen_ai/abi.h"
 #include "backend/chrome_screen_ai/annotation_decoder.h"
 #include "backend/chrome_screen_ai/model_files.h"
 #include "backend/chrome_screen_ai/runtime_package.h"
 
 #include <filesystem>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -26,21 +25,21 @@ T LoadExport(HMODULE library, const char* name) {
 }
 
 
-chrome153::Exports LoadExports(HMODULE library) {
-	chrome153::Exports exports;
+abi::Exports LoadExports(HMODULE library) {
+	abi::Exports exports;
 
-	exports.set_file_content_functions = LoadExport<chrome153::SetFileContentFunctionsFn>(
+	exports.set_file_content_functions = LoadExport<abi::SetFileContentFunctionsFn>(
 		library,
 		"SetFileContentFunctions"
 	);
-	exports.initialize = LoadExport<chrome153::InitOcrFn>(library, "InitOCRUsingCallback");
-	exports.uninitialize = LoadExport<chrome153::UninitOcrFn>(library, "UninitializeOCR");
-	exports.get_max_dimension = LoadExport<chrome153::GetMaxDimensionFn>(
+	exports.initialize = LoadExport<abi::InitOcrFn>(library, "InitOCRUsingCallback");
+	exports.uninitialize = LoadExport<abi::UninitOcrFn>(library, "UninitializeOCR");
+	exports.get_max_dimension = LoadExport<abi::GetMaxDimensionFn>(
 		library,
 		"GetMaxImageDimension"
 	);
-	exports.perform_ocr = LoadExport<chrome153::PerformOcrFn>(library, "PerformOCR");
-	exports.free_result = LoadExport<chrome153::FreeResultFn>(
+	exports.perform_ocr = LoadExport<abi::PerformOcrFn>(library, "PerformOCR");
+	exports.free_result = LoadExport<abi::FreeResultFn>(
 		library,
 		"FreeLibraryAllocatedCharArray"
 	);
@@ -52,7 +51,7 @@ chrome153::Exports LoadExports(HMODULE library) {
 
 
 struct ChromeBackend::State {
-	chrome153::Exports exports;
+	abi::Exports exports;
 	std::shared_ptr<const runtime_package::Package> runtime_package;
 	uint32_t max_image_dimension = 0;
 	bool model_callbacks_registered = false;
@@ -60,19 +59,12 @@ struct ChromeBackend::State {
 };
 
 
-ChromeBackend::ChromeBackend(
-	const std::optional<std::filesystem::path>& configured_runtime_directory
-)
+ChromeBackend::ChromeBackend()
 	: state_(new State()) {
 	try {
-		std::filesystem::path runtime_directory;
-
-		if (configured_runtime_directory) {
-			runtime_directory = *configured_runtime_directory;
-		} else {
-			this->state_->runtime_package = runtime_package::Package::LoadFixed();
-			runtime_directory = this->state_->runtime_package->ExtractNativeLibraries();
-		}
+		this->state_->runtime_package = runtime_package::Package::LoadFixed();
+		const std::filesystem::path runtime_directory =
+			this->state_->runtime_package->ExtractNativeLibraries();
 
 		const std::filesystem::path library_path = runtime_directory / L"chrome_screen_ai.dll";
 		this->library_ = LoadLibraryExW(
@@ -89,9 +81,9 @@ ChromeBackend::ChromeBackend(
 
 		this->state_->exports = LoadExports(this->library_);
 
-		const bool callbacks_registered = this->state_->runtime_package
-			? model_files::RegisterRuntimePackage(this->state_->runtime_package)
-			: model_files::RegisterRuntimeDirectory(runtime_directory);
+		const bool callbacks_registered = model_files::RegisterRuntimePackage(
+			this->state_->runtime_package
+		);
 
 		if (!callbacks_registered)
 			throw std::runtime_error("Only one ScreenAI recognizer may be active in this process.");
@@ -134,7 +126,7 @@ void ChromeBackend::Release() noexcept {
 		if (this->state_->initialized && this->state_->exports.uninitialize)
 			this->state_->exports.uninitialize();
 		if (this->state_->model_callbacks_registered)
-			model_files::UnregisterRuntimeSource();
+			model_files::UnregisterRuntimePackage();
 
 		delete this->state_;
 		this->state_ = nullptr;
@@ -155,7 +147,7 @@ core::OcrResult ChromeBackend::PerformOcr(const core::Image& image) {
 	if (image.width == 0 || image.height == 0 || image.bgra.empty())
 		throw std::runtime_error("The normalized image is empty.");
 
-	chrome153::SkBitmapAbiView bitmap{};
+	abi::SkBitmapAbiView bitmap{};
 	bitmap.pixel_ref = nullptr;
 	bitmap.pixels = image.bgra.data();
 	bitmap.row_bytes = static_cast<size_t>(image.width) * 4;
@@ -171,7 +163,7 @@ core::OcrResult ChromeBackend::PerformOcr(const core::Image& image) {
 	if (!raw_result)
 		return {};
 
-	std::unique_ptr<char, chrome153::FreeResultFn> result_owner(
+	std::unique_ptr<char, abi::FreeResultFn> result_owner(
 		raw_result,
 		this->state_->exports.free_result
 	);

@@ -12,12 +12,4 @@ Generate the local package from the matching Chrome ScreenAI 153.5 runtime direc
 
 The packer accepts only the source directory. It checks that `manifest.json` reports version 153.5 and writes the fixed filename under the repository's `runtime` directory. That directory is ignored by Git.
 
-For testing with an external runtime, set the environment variable or pass a directory:
-
-    $env:SCREENAI_RUNTIME_DIR = 'C:\path\to\screen_ai\153.4'
-
-    .\screenai.exe .\scan.png --runtime-dir 'C:\path\to\screen_ai\153.4'
-
-The C++ wrapper accepts the same directory in its constructor. Python accepts it with `Recognizer(runtime_dir=...)`. An explicit directory or environment variable takes precedence over the fixed sidecar package and must contain `chrome_screen_ai.dll` plus matching model files.
-
 This adapter supports one active recognizer per process because the recovered ScreenAI model callbacks are process-global. Recognition calls through one recognizer are serialized by the SDK.

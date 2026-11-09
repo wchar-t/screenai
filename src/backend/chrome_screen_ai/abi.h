@@ -1,5 +1,5 @@
-#ifndef SCREENAI_BACKEND_CHROME_SCREEN_AI_ABI_V153_H_
-#define SCREENAI_BACKEND_CHROME_SCREEN_AI_ABI_V153_H_
+#ifndef SCREENAI_BACKEND_CHROME_SCREEN_AI_ABI_H_
+#define SCREENAI_BACKEND_CHROME_SCREEN_AI_ABI_H_
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace screenai::backend::chrome153 {
+namespace screenai::backend::abi {
 
 using GetSizeCallback = uint32_t(__cdecl*)(const char*);
 using ReadCallback = void(__cdecl*)(const char*, uint32_t, char*);
@@ -45,6 +45,6 @@ struct Exports {
 	FreeResultFn free_result = nullptr;
 };
 
-} // namespace screenai::backend::chrome153
+} // namespace screenai::backend::abi
 
 #endif
