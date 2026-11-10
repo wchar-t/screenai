@@ -160,8 +160,13 @@ core::OcrResult ChromeBackend::PerformOcr(const core::Image& image) {
 	uint32_t result_length = 0;
 	char* raw_result = this->state_->exports.perform_ocr(&bitmap, result_length);
 
-	if (!raw_result)
-		return {};
+	if (!raw_result) {
+		core::OcrResult result;
+		result.image_width = image.width;
+		result.image_height = image.height;
+
+		return result;
+	}
 
 	std::unique_ptr<char, abi::FreeResultFn> result_owner(
 		raw_result,
@@ -173,8 +178,11 @@ core::OcrResult ChromeBackend::PerformOcr(const core::Image& image) {
 
 	core::OcrResult result;
 
-	if (!ParseVisualAnnotation(std::string_view(result_owner.get(), result_length), result.text))
+	if (!ParseVisualAnnotation(std::string_view(result_owner.get(), result_length), result))
 		throw OcrError("ScreenAI returned an invalid VisualAnnotation response.");
+
+	result.image_width = image.width;
+	result.image_height = image.height;
 
 	return result;
 }

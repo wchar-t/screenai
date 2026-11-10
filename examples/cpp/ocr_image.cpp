@@ -1,7 +1,6 @@
 #include "screenai/screenai.hpp"
 
 #include <iostream>
-#include <string>
 
 int wmain(int argc, wchar_t** argv) {
 	if (argc != 2) {
@@ -13,10 +12,25 @@ int wmain(int argc, wchar_t** argv) {
 	try {
 		screenai::Recognizer recognizer;
 
-		const std::string text = recognizer.RecognizeFile(argv[1]);
+		const screenai::OcrResult result = recognizer.RecognizeFileResult(argv[1]);
 
-		std::cout.write(text.data(), static_cast<std::streamsize>(text.size()));
+		std::cout.write(result.text.data(), static_cast<std::streamsize>(result.text.size()));
 		std::cout << '\n';
+
+		for (const screenai::OcrBlock& block : result.blocks) {
+			for (const screenai::OcrLine& line : block.lines) {
+				if (line.bounding_box) {
+					std::cout << "Line box: "
+						<< line.bounding_box->x << ", "
+						<< line.bounding_box->y << ", "
+						<< line.bounding_box->width << ", "
+						<< line.bounding_box->height << '\n';
+				}
+
+				if (line.confidence)
+					std::cout << "Line confidence: " << *line.confidence << '\n';
+			}
+		}
 
 		return 0;
 	} catch (const std::exception& error) {

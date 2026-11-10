@@ -1,13 +1,11 @@
 #ifndef SCREENAI_CORE_RESULT_H_
 #define SCREENAI_CORE_RESULT_H_
 
-#include <string>
+#include "screenai/ocr_result.hpp"
 
 namespace screenai::core {
 
-struct OcrResult {
-	std::string text;
-};
+using OcrResult = screenai::OcrResult;
 
 } // namespace screenai::core
 

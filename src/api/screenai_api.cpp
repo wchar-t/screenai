@@ -10,6 +10,9 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 struct screenai_recognizer {
 	screenai_recognizer()
@@ -17,6 +20,79 @@ struct screenai_recognizer {
 
 	std::unique_ptr<screenai::core::Recognizer> implementation;
 	std::mutex mutex;
+};
+
+
+struct screenai_ocr_result {
+	explicit screenai_ocr_result(screenai::core::OcrResult result)
+		: result_(std::move(result)) {
+		this->BuildView();
+	}
+
+	const screenai_ocr_result_view* GetView() const noexcept {
+		return &this->view_;
+	}
+
+private:
+	static screenai_bounding_box_view ToView(const screenai::BoundingBox& bounding_box) {
+		return {
+			bounding_box.x,
+			bounding_box.y,
+			bounding_box.width,
+			bounding_box.height,
+			bounding_box.angle,
+		};
+	}
+
+	void BuildView() {
+		size_t line_count = 0;
+
+		for (const screenai::OcrBlock& block : this->result_.blocks)
+			line_count += block.lines.size();
+
+		this->block_views_.reserve(this->result_.blocks.size());
+		this->line_views_.reserve(line_count);
+
+		for (const screenai::OcrBlock& block : this->result_.blocks) {
+			screenai_block_view block_view{};
+			const size_t first_line = this->line_views_.size();
+
+			for (const screenai::OcrLine& line : block.lines) {
+				screenai_line_view line_view{};
+
+				line_view.text = line.text.data();
+				line_view.text_length = line.text.size();
+				if (line.bounding_box) {
+					line_view.bounding_box = ToView(*line.bounding_box);
+					line_view.has_bounding_box = 1;
+				}
+				if (line.confidence) {
+					line_view.confidence = *line.confidence;
+					line_view.has_confidence = 1;
+				}
+
+				this->line_views_.push_back(line_view);
+			}
+
+			if (!block.lines.empty())
+				block_view.lines = this->line_views_.data() + first_line;
+			block_view.line_count = block.lines.size();
+
+			this->block_views_.push_back(block_view);
+		}
+
+		this->view_.text = this->result_.text.data();
+		this->view_.text_length = this->result_.text.size();
+		this->view_.image_width = this->result_.image_width;
+		this->view_.image_height = this->result_.image_height;
+		this->view_.blocks = this->block_views_.data();
+		this->view_.block_count = this->block_views_.size();
+	}
+
+	screenai::core::OcrResult result_;
+	std::vector<screenai_line_view> line_views_;
+	std::vector<screenai_block_view> block_views_;
+	screenai_ocr_result_view view_{};
 };
 
 namespace {
@@ -40,7 +116,7 @@ void SetError(char* output, size_t capacity, const std::string& message) noexcep
 
 
 screenai_status CopyText(
-	const std::string& text,
+	std::string_view text,
 	char** output,
 	size_t* output_length,
 	char* error_message,
@@ -68,6 +144,35 @@ screenai_status CopyText(
 	*output_length = text.size();
 
 	return SCREENAI_STATUS_OK;
+}
+
+
+screenai_status CopyResultText(
+	screenai_ocr_result* result,
+	char** output,
+	size_t* output_length,
+	char* error_message,
+	size_t error_capacity
+) {
+	std::unique_ptr<screenai_ocr_result, decltype(&screenai_ocr_result_destroy)> result_owner(
+		result,
+		&screenai_ocr_result_destroy
+	);
+	const screenai_ocr_result_view* result_view = screenai_ocr_result_get_view(result_owner.get());
+
+	if (!result_view) {
+		SetError(error_message, error_capacity, "Could not read the OCR result.");
+
+		return SCREENAI_STATUS_INTERNAL_ERROR;
+	}
+
+	return CopyText(
+		std::string_view(result_view->text, result_view->text_length),
+		output,
+		output_length,
+		error_message,
+		error_capacity
+	);
 }
 
 
@@ -157,35 +262,29 @@ screenai_status SCREENAI_CALL screenai_get_max_image_dimension(
 }
 
 
-screenai_status SCREENAI_CALL screenai_recognize_file(
+screenai_status SCREENAI_CALL screenai_recognize_file_result(
 	screenai_recognizer* recognizer,
 	const wchar_t* image_path,
-	char** out_utf8_text,
-	size_t* out_text_length,
+	screenai_ocr_result** out_result,
 	char* error_message,
 	size_t error_capacity
 ) {
-	if (!recognizer || !image_path || !*image_path || !out_utf8_text || !out_text_length) {
-		SetError(error_message, error_capacity, "Recognizer, image path, and output pointers are required.");
+	if (!recognizer || !image_path || !*image_path || !out_result) {
+		SetError(error_message, error_capacity, "Recognizer, image path, and output pointer are required.");
 
 		return SCREENAI_STATUS_INVALID_ARGUMENT;
 	}
 
-	*out_utf8_text = nullptr;
-	*out_text_length = 0;
+	*out_result = nullptr;
 
 	try {
 		std::lock_guard<std::mutex> lock(recognizer->mutex);
 
-		const auto result = recognizer->implementation->RecognizeFile(image_path);
+		screenai::core::OcrResult result = recognizer->implementation->RecognizeFile(image_path);
 
-		return CopyText(
-			result.text,
-			out_utf8_text,
-			out_text_length,
-			error_message,
-			error_capacity
-		);
+		*out_result = new screenai_ocr_result(std::move(result));
+
+		return SCREENAI_STATUS_OK;
 	} catch (const std::bad_alloc&) {
 		SetError(error_message, error_capacity, "Could not allocate the OCR result.");
 
@@ -219,7 +318,46 @@ screenai_status SCREENAI_CALL screenai_recognize_file(
 }
 
 
-screenai_status SCREENAI_CALL screenai_recognize_pixels(
+screenai_status SCREENAI_CALL screenai_recognize_file(
+	screenai_recognizer* recognizer,
+	const wchar_t* image_path,
+	char** out_utf8_text,
+	size_t* out_text_length,
+	char* error_message,
+	size_t error_capacity
+) {
+	if (!out_utf8_text || !out_text_length) {
+		SetError(error_message, error_capacity, "Output text pointers are required.");
+
+		return SCREENAI_STATUS_INVALID_ARGUMENT;
+	}
+
+	*out_utf8_text = nullptr;
+	*out_text_length = 0;
+	screenai_ocr_result* result = nullptr;
+
+	const screenai_status status = screenai_recognize_file_result(
+		recognizer,
+		image_path,
+		&result,
+		error_message,
+		error_capacity
+	);
+
+	if (status != SCREENAI_STATUS_OK)
+		return status;
+
+	return CopyResultText(
+		result,
+		out_utf8_text,
+		out_text_length,
+		error_message,
+		error_capacity
+	);
+}
+
+
+screenai_status SCREENAI_CALL screenai_recognize_pixels_result(
 	screenai_recognizer* recognizer,
 	const uint8_t* pixels,
 	size_t pixel_buffer_size,
@@ -227,13 +365,12 @@ screenai_status SCREENAI_CALL screenai_recognize_pixels(
 	uint32_t height,
 	uint32_t stride,
 	screenai_pixel_format pixel_format,
-	char** out_utf8_text,
-	size_t* out_text_length,
+	screenai_ocr_result** out_result,
 	char* error_message,
 	size_t error_capacity
 ) {
-	if (!recognizer || !pixels || !out_utf8_text || !out_text_length) {
-		SetError(error_message, error_capacity, "Recognizer, pixels, and output pointers are required.");
+	if (!recognizer || !pixels || !out_result) {
+		SetError(error_message, error_capacity, "Recognizer, pixels, and output pointer are required.");
 
 		return SCREENAI_STATUS_INVALID_ARGUMENT;
 	}
@@ -249,13 +386,12 @@ screenai_status SCREENAI_CALL screenai_recognize_pixels(
 		return SCREENAI_STATUS_INVALID_ARGUMENT;
 	}
 
-	*out_utf8_text = nullptr;
-	*out_text_length = 0;
+	*out_result = nullptr;
 
 	try {
 		std::lock_guard<std::mutex> lock(recognizer->mutex);
 
-		const auto result = recognizer->implementation->RecognizePixels(
+		screenai::core::OcrResult result = recognizer->implementation->RecognizePixels(
 			pixels,
 			pixel_buffer_size,
 			width,
@@ -264,13 +400,9 @@ screenai_status SCREENAI_CALL screenai_recognize_pixels(
 			pixel_format == SCREENAI_PIXEL_FORMAT_RGBA8
 		);
 
-		return CopyText(
-			result.text,
-			out_utf8_text,
-			out_text_length,
-			error_message,
-			error_capacity
-		);
+		*out_result = new screenai_ocr_result(std::move(result));
+
+		return SCREENAI_STATUS_OK;
 	} catch (const std::bad_alloc&) {
 		SetError(error_message, error_capacity, "Could not allocate the OCR result.");
 
@@ -301,6 +433,70 @@ screenai_status SCREENAI_CALL screenai_recognize_pixels(
 
 		return SCREENAI_STATUS_INTERNAL_ERROR;
 	}
+}
+
+
+const screenai_ocr_result_view* SCREENAI_CALL screenai_ocr_result_get_view(
+	const screenai_ocr_result* result
+) {
+	if (!result)
+		return nullptr;
+
+	return result->GetView();
+}
+
+
+void SCREENAI_CALL screenai_ocr_result_destroy(screenai_ocr_result* result) {
+	delete result;
+}
+
+
+screenai_status SCREENAI_CALL screenai_recognize_pixels(
+	screenai_recognizer* recognizer,
+	const uint8_t* pixels,
+	size_t pixel_buffer_size,
+	uint32_t width,
+	uint32_t height,
+	uint32_t stride,
+	screenai_pixel_format pixel_format,
+	char** out_utf8_text,
+	size_t* out_text_length,
+	char* error_message,
+	size_t error_capacity
+) {
+	if (!out_utf8_text || !out_text_length) {
+		SetError(error_message, error_capacity, "Output text pointers are required.");
+
+		return SCREENAI_STATUS_INVALID_ARGUMENT;
+	}
+
+	*out_utf8_text = nullptr;
+	*out_text_length = 0;
+	screenai_ocr_result* result = nullptr;
+
+	const screenai_status status = screenai_recognize_pixels_result(
+		recognizer,
+		pixels,
+		pixel_buffer_size,
+		width,
+		height,
+		stride,
+		pixel_format,
+		&result,
+		error_message,
+		error_capacity
+	);
+
+	if (status != SCREENAI_STATUS_OK)
+		return status;
+
+	return CopyResultText(
+		result,
+		out_utf8_text,
+		out_text_length,
+		error_message,
+		error_capacity
+	);
 }
 
 

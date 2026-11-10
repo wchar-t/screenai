@@ -3,10 +3,51 @@ import os
 from enum import IntEnum
 from pathlib import Path
 
+from .types import BoundingBox, OcrBlock, OcrLine, OcrResult
+
 
 class PixelFormat(IntEnum):
     BGRA8 = 1
     RGBA8 = 2
+
+
+class _BoundingBoxView(ctypes.Structure):
+    _fields_ = [
+        ('x', ctypes.c_int32),
+        ('y', ctypes.c_int32),
+        ('width', ctypes.c_int32),
+        ('height', ctypes.c_int32),
+        ('angle', ctypes.c_float),
+    ]
+
+
+class _LineView(ctypes.Structure):
+    _fields_ = [
+        ('text', ctypes.POINTER(ctypes.c_char)),
+        ('text_length', ctypes.c_size_t),
+        ('bounding_box', _BoundingBoxView),
+        ('has_bounding_box', ctypes.c_int32),
+        ('confidence', ctypes.c_float),
+        ('has_confidence', ctypes.c_int32),
+    ]
+
+
+class _BlockView(ctypes.Structure):
+    _fields_ = [
+        ('lines', ctypes.POINTER(_LineView)),
+        ('line_count', ctypes.c_size_t),
+    ]
+
+
+class _OcrResultView(ctypes.Structure):
+    _fields_ = [
+        ('text', ctypes.POINTER(ctypes.c_char)),
+        ('text_length', ctypes.c_size_t),
+        ('image_width', ctypes.c_uint32),
+        ('image_height', ctypes.c_uint32),
+        ('blocks', ctypes.POINTER(_BlockView)),
+        ('block_count', ctypes.c_size_t),
+    ]
 
 
 def _load_library():
@@ -76,17 +117,16 @@ class Recognizer:
         ]
         self._library.screenai_get_max_image_dimension.restype = ctypes.c_int
 
-        self._library.screenai_recognize_file.argtypes = [
+        self._library.screenai_recognize_file_result.argtypes = [
             ctypes.c_void_p,
             ctypes.c_wchar_p,
             ctypes.POINTER(ctypes.c_void_p),
-            ctypes.POINTER(ctypes.c_size_t),
             char_pointer,
             ctypes.c_size_t,
         ]
-        self._library.screenai_recognize_file.restype = ctypes.c_int
+        self._library.screenai_recognize_file_result.restype = ctypes.c_int
 
-        self._library.screenai_recognize_pixels.argtypes = [
+        self._library.screenai_recognize_pixels_result.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_uint8),
             ctypes.c_size_t,
@@ -95,14 +135,16 @@ class Recognizer:
             ctypes.c_uint32,
             ctypes.c_int,
             ctypes.POINTER(ctypes.c_void_p),
-            ctypes.POINTER(ctypes.c_size_t),
             char_pointer,
             ctypes.c_size_t,
         ]
-        self._library.screenai_recognize_pixels.restype = ctypes.c_int
+        self._library.screenai_recognize_pixels_result.restype = ctypes.c_int
 
-        self._library.screenai_free_buffer.argtypes = [ctypes.c_void_p]
-        self._library.screenai_free_buffer.restype = None
+        self._library.screenai_ocr_result_get_view.argtypes = [ctypes.c_void_p]
+        self._library.screenai_ocr_result_get_view.restype = ctypes.POINTER(_OcrResultView)
+
+        self._library.screenai_ocr_result_destroy.argtypes = [ctypes.c_void_p]
+        self._library.screenai_ocr_result_destroy.restype = None
 
     @staticmethod
     def _check(status, error):
@@ -126,15 +168,16 @@ class Recognizer:
         return dimension.value
 
     def recognize_file(self, image_path):
-        output = ctypes.c_void_p()
-        output_length = ctypes.c_size_t()
+        return self.recognize_file_result(image_path).text
+
+    def recognize_file_result(self, image_path):
+        result = ctypes.c_void_p()
         error = ctypes.create_string_buffer(1024)
 
-        status = self._library.screenai_recognize_file(
+        status = self._library.screenai_recognize_file_result(
             self._handle,
             os.fsdecode(os.fspath(image_path)),
-            ctypes.byref(output),
-            ctypes.byref(output_length),
+            ctypes.byref(result),
             error,
             len(error),
         )
@@ -142,11 +185,81 @@ class Recognizer:
         self._check(status, error)
 
         try:
-            return ctypes.string_at(output, output_length.value).decode('utf-8')
+            return self._copy_result(result)
         finally:
-            self._library.screenai_free_buffer(output)
+            self._library.screenai_ocr_result_destroy(result)
 
-    def recognize_pixels(
+    def _copy_result(self, result_handle):
+        view_pointer = self._library.screenai_ocr_result_get_view(result_handle)
+
+        if not view_pointer:
+            raise RuntimeError('Could not read the OCR result.')
+
+        view = view_pointer.contents
+        text = self._copy_text(view.text, view.text_length)
+        blocks = []
+
+        for block_index in range(view.block_count):
+            source_block = view.blocks[block_index]
+            lines = []
+
+            for line_index in range(source_block.line_count):
+                source_line = source_block.lines[line_index]
+                line_text = self._copy_text(source_line.text, source_line.text_length)
+                bounding_box = self._copy_bounding_box(
+                    source_line.bounding_box,
+                    source_line.has_bounding_box,
+                )
+
+                line_confidence = source_line.confidence if source_line.has_confidence else None
+
+                lines.append(OcrLine(
+                    line_text,
+                    bounding_box,
+                    line_confidence,
+                ))
+
+            blocks.append(OcrBlock(
+                tuple(lines),
+            ))
+
+        return OcrResult(
+            text,
+            view.image_width,
+            view.image_height,
+            tuple(blocks),
+        )
+
+    @staticmethod
+    def _copy_text(value, length):
+        if not length:
+            return ''
+
+        return ctypes.string_at(value, length).decode('utf-8')
+
+    @staticmethod
+    def _copy_bounding_box(source, is_present):
+        if not is_present:
+            return None
+
+        return BoundingBox(
+            source.x,
+            source.y,
+            source.width,
+            source.height,
+            source.angle,
+        )
+
+    def recognize_pixels(self, pixels, width, height, stride, pixel_format=PixelFormat.RGBA8):
+        return self.recognize_pixels_result(
+            pixels,
+            width,
+            height,
+            stride,
+            pixel_format,
+        ).text
+
+    def recognize_pixels_result(
         self,
         pixels,
         width,
@@ -160,11 +273,10 @@ class Recognizer:
             raise ValueError('Pixel buffer must not be empty.')
 
         pixel_array = (ctypes.c_uint8 * len(pixel_bytes)).from_buffer_copy(pixel_bytes)
-        output = ctypes.c_void_p()
-        output_length = ctypes.c_size_t()
+        result = ctypes.c_void_p()
         error = ctypes.create_string_buffer(1024)
 
-        status = self._library.screenai_recognize_pixels(
+        status = self._library.screenai_recognize_pixels_result(
             self._handle,
             pixel_array,
             len(pixel_bytes),
@@ -172,8 +284,7 @@ class Recognizer:
             height,
             stride,
             int(pixel_format),
-            ctypes.byref(output),
-            ctypes.byref(output_length),
+            ctypes.byref(result),
             error,
             len(error),
         )
@@ -181,9 +292,9 @@ class Recognizer:
         self._check(status, error)
 
         try:
-            return ctypes.string_at(output, output_length.value).decode('utf-8')
+            return self._copy_result(result)
         finally:
-            self._library.screenai_free_buffer(output)
+            self._library.screenai_ocr_result_destroy(result)
 
     def close(self):
         if getattr(self, '_handle', None):
