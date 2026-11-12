@@ -9,7 +9,7 @@ from pathlib import Path
 
 MAGIC = b'SAIPAK1\0'
 FORMAT_VERSION = 1
-RUNTIME_VERSION = '153.5'
+RUNTIME_VERSION = '153.7'
 FLAG_NATIVE_LIBRARY = 1
 HEADER = struct.Struct('<8sIIHH32s')
 ENTRY = struct.Struct('<HHQ32s')

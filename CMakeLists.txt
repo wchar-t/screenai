@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(SCREENAI_RUNTIME_VERSION "153.5")
+set(SCREENAI_RUNTIME_VERSION "153.7")
 set(
 	SCREENAI_RUNTIME_PACKAGE_NAME
 	"screenai-runtime-${SCREENAI_RUNTIME_VERSION}.sai"
@@ -93,7 +93,7 @@ if(BUILD_TESTING)
 		tests/annotation_decoder_test.cpp
 		src/backend/chrome_screen_ai/annotation_decoder.cpp
 	)
-	target_include_directories(annotation_decoder_test PRIVATE src)
+	target_include_directories(annotation_decoder_test PRIVATE src include)
 	if(MSVC)
 		target_compile_options(annotation_decoder_test PRIVATE /W4 /permissive-)
 	endif()

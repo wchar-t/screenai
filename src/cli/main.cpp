@@ -16,7 +16,7 @@ namespace {
 
 void PrintUsage() {
 	std::wcerr << L"Usage: screenai.exe <image-path> [--json]\n"
-		L"The fixed 153.5 runtime package beside screenai.dll is required.\n";
+		L"The fixed 153.7 runtime package beside screenai.dll is required.\n";
 }
 
 

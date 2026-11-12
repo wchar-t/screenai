@@ -4,7 +4,7 @@ This package is a small `ctypes` wrapper around the same `screenai.dll` used by 
 
 Install the binding from this directory with `py -m pip install .`. Install Pillow support with `py -m pip install ".[pillow]"`.
 
-Make `screenai.dll` available next to this package or set `SCREENAI_SDK_DLL` to its full path. The DLL requires `runtime/screenai-runtime-153.5.sai` under its own directory. Keep the `runtime` folder beside the DLL when distributing the Python binding. For `batch_worker_count` greater than one, also keep the built `screenai_worker.exe` beside the DLL; the SDK uses it as its persistent worker host.
+Make `screenai.dll` available next to this package or set `SCREENAI_SDK_DLL` to its full path. The DLL requires `runtime/screenai-runtime-153.7.sai` under its own directory. Keep the `runtime` folder beside the DLL when distributing the Python binding. For `batch_worker_count` greater than one, also keep the built `screenai_worker.exe` beside the DLL; the SDK uses it as its persistent worker host.
 
     from screenai import Recognizer
     from screenai.pil import recognize_pil
