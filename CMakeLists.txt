@@ -32,6 +32,7 @@ endif()
 
 add_library(screenai_sdk SHARED
 	src/api/screenai_api.cpp
+	src/api/worker_process.cpp
 	src/backend/chrome_screen_ai/annotation_decoder.cpp
 	src/backend/chrome_screen_ai/chrome_backend.cpp
 	src/backend/chrome_screen_ai/model_files.cpp
@@ -68,10 +69,22 @@ add_custom_command(TARGET screenai_sdk POST_BUILD
 	VERBATIM
 )
 
-add_executable(screenai src/cli/main.cpp)
+add_executable(screenai
+	src/cli/main.cpp
+)
 target_link_libraries(screenai PRIVATE screenai_sdk)
 if(MSVC)
 	target_compile_options(screenai PRIVATE /W4 /permissive-)
+endif()
+
+add_executable(screenai_worker
+	src/worker/main.cpp
+	src/worker/worker_host.cpp
+)
+target_include_directories(screenai_worker PRIVATE src)
+target_link_libraries(screenai_worker PRIVATE screenai_sdk)
+if(MSVC)
+	target_compile_options(screenai_worker PRIVATE /W4 /permissive-)
 endif()
 
 include(CTest)
@@ -87,7 +100,7 @@ if(BUILD_TESTING)
 	add_test(NAME annotation_decoder_test COMMAND annotation_decoder_test)
 endif()
 
-install(TARGETS screenai_sdk screenai
+install(TARGETS screenai_sdk screenai screenai_worker
 	RUNTIME DESTINATION bin
 	LIBRARY DESTINATION bin
 	ARCHIVE DESTINATION lib

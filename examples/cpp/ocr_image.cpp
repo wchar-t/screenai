@@ -12,7 +12,7 @@ int wmain(int argc, wchar_t** argv) {
 	try {
 		screenai::Recognizer recognizer;
 
-		const screenai::OcrResult result = recognizer.RecognizeFileResult(argv[1]);
+		const screenai::OcrResult result = recognizer.Recognize(argv[1]);
 
 		std::cout.write(result.text.data(), static_cast<std::streamsize>(result.text.size()));
 		std::cout << '\n';

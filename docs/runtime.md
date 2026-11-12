@@ -13,3 +13,5 @@ Generate the local package from the matching Chrome ScreenAI 153.5 runtime direc
 The packer accepts only the source directory. It checks that `manifest.json` reports version 153.5 and writes the fixed filename under the repository's `runtime` directory. That directory is ignored by Git.
 
 This adapter supports one active recognizer per process because the recovered ScreenAI model callbacks are process-global. Recognition calls through one recognizer are serialized by the SDK.
+
+`batch_worker_count` includes the recognizer in the calling process. Counts above one start `batch_worker_count - 1` persistent `screenai_worker.exe` processes when the recognizer is created. `RecognizeBatch` distributes paths across those workers and the local recognizer, then returns results in input order. Failed items are empty optional results (`None` in Python, `std::nullopt` in C++). `Recognize` and pixel recognition continue to use the local recognizer.

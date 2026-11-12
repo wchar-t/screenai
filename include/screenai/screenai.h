@@ -70,7 +70,10 @@ typedef struct screenai_ocr_result_view {
 
 typedef struct screenai_ocr_result screenai_ocr_result;
 
+/* A count of one keeps recognition in the calling process. Larger counts use
+   persistent screenai_worker.exe processes for batch calls. */
 SCREENAI_API screenai_status SCREENAI_CALL screenai_create(
+	int32_t batch_worker_count,
 	screenai_recognizer** out_recognizer,
 	char* error_message,
 	size_t error_capacity
@@ -87,16 +90,7 @@ SCREENAI_API screenai_status SCREENAI_CALL screenai_get_max_image_dimension(
 	size_t error_capacity
 );
 
-SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize_file(
-	screenai_recognizer* recognizer,
-	const wchar_t* image_path,
-	char** out_utf8_text,
-	size_t* out_text_length,
-	char* error_message,
-	size_t error_capacity
-);
-
-SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize_file_result(
+SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize(
 	screenai_recognizer* recognizer,
 	const wchar_t* image_path,
 	screenai_ocr_result** out_result,
@@ -104,21 +98,19 @@ SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize_file_result(
 	size_t error_capacity
 );
 
-SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize_pixels(
+/* Each input has a corresponding output slot. Failed items leave a null slot.
+   The caller owns each non-null result and must destroy it. */
+SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize_batch(
 	screenai_recognizer* recognizer,
-	const uint8_t* pixels,
-	size_t pixel_buffer_size,
-	uint32_t width,
-	uint32_t height,
-	uint32_t stride,
-	screenai_pixel_format pixel_format,
-	char** out_utf8_text,
-	size_t* out_text_length,
+	const wchar_t* const* image_paths,
+	size_t image_count,
+	screenai_ocr_result** out_results,
+	size_t result_capacity,
 	char* error_message,
 	size_t error_capacity
 );
 
-SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize_pixels_result(
+SCREENAI_API screenai_status SCREENAI_CALL screenai_recognize_pixels(
 	screenai_recognizer* recognizer,
 	const uint8_t* pixels,
 	size_t pixel_buffer_size,
@@ -139,8 +131,6 @@ SCREENAI_API const screenai_ocr_result_view* SCREENAI_CALL screenai_ocr_result_g
 SCREENAI_API void SCREENAI_CALL screenai_ocr_result_destroy(
 	screenai_ocr_result* result
 );
-
-SCREENAI_API void SCREENAI_CALL screenai_free_buffer(char* buffer);
 
 #ifdef __cplusplus
 }

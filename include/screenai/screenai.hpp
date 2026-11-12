@@ -11,28 +11,40 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace screenai {
 
 class Error : public std::runtime_error {
 public:
-	explicit Error(const std::string& message)
-		: std::runtime_error(message) {}
+	explicit Error(
+		const std::string& message,
+		screenai_status status = SCREENAI_STATUS_INTERNAL_ERROR
+	)
+		: std::runtime_error(message), status_(status) {}
+
+	screenai_status GetStatus() const noexcept {
+		return this->status_;
+	}
+
+private:
+	screenai_status status_;
 };
 
 class Recognizer {
 public:
-	Recognizer() {
+	explicit Recognizer(int32_t batch_worker_count = 1) {
 		char error[1024]{};
 
 		const screenai_status status = screenai_create(
+			batch_worker_count,
 			&this->recognizer_,
 			error,
 			sizeof(error)
 		);
 
 		if (status != SCREENAI_STATUS_OK)
-			throw Error(error[0] ? error : "Could not initialize ScreenAI.");
+			throw Error(error[0] ? error : "Could not initialize ScreenAI.", status);
 	}
 
 	~Recognizer() {
@@ -66,20 +78,19 @@ public:
 		);
 
 		if (status != SCREENAI_STATUS_OK)
-			throw Error(error[0] ? error : "Could not read the maximum image dimension.");
+			throw Error(
+				error[0] ? error : "Could not read the maximum image dimension.",
+				status
+			);
 
 		return dimension;
 	}
 
-	std::string RecognizeFile(const std::wstring& image_path) const {
-		return this->RecognizeFileResult(image_path).text;
-	}
-
-	OcrResult RecognizeFileResult(const std::wstring& image_path) const {
+	OcrResult Recognize(const std::wstring& image_path) const {
 		screenai_ocr_result* raw_result = nullptr;
 		char error[1024]{};
 
-		const screenai_status status = screenai_recognize_file_result(
+		const screenai_status status = screenai_recognize(
 			this->recognizer_,
 			image_path.c_str(),
 			&raw_result,
@@ -93,7 +104,7 @@ public:
 		);
 
 		if (status != SCREENAI_STATUS_OK)
-			throw Error(error[0] ? error : "OCR failed.");
+			throw Error(error[0] ? error : "OCR failed.", status);
 
 		const screenai_ocr_result_view* result_view = screenai_ocr_result_get_view(result_owner.get());
 
@@ -103,25 +114,66 @@ public:
 		return this->CopyResult(*result_view);
 	}
 
-	std::string RecognizePixels(
-		const uint8_t* pixels,
-		size_t pixel_buffer_size,
-		uint32_t width,
-		uint32_t height,
-		uint32_t stride,
-		screenai_pixel_format pixel_format
+	std::vector<std::optional<OcrResult>> RecognizeBatch(
+		const std::vector<std::wstring>& image_paths
 	) const {
-		return this->RecognizePixelsResult(
-			pixels,
-			pixel_buffer_size,
-			width,
-			height,
-			stride,
-			pixel_format
-		).text;
+		std::vector<const wchar_t*> path_pointers;
+		path_pointers.reserve(image_paths.size());
+
+		for (const std::wstring& image_path : image_paths)
+			path_pointers.push_back(image_path.c_str());
+
+		using ResultOwner = std::unique_ptr<
+			screenai_ocr_result,
+			decltype(&screenai_ocr_result_destroy)
+		>;
+		std::vector<ResultOwner> result_owners;
+		result_owners.reserve(image_paths.size());
+
+		std::vector<screenai_ocr_result*> raw_results(image_paths.size(), nullptr);
+		char error[1024]{};
+
+		const screenai_status status = screenai_recognize_batch(
+			this->recognizer_,
+			path_pointers.data(),
+			path_pointers.size(),
+			raw_results.data(),
+			raw_results.size(),
+			error,
+			sizeof(error)
+		);
+
+		for (screenai_ocr_result* raw_result : raw_results) {
+			result_owners.emplace_back(raw_result, &screenai_ocr_result_destroy);
+		}
+
+		if (status != SCREENAI_STATUS_OK)
+			throw Error(error[0] ? error : "OCR batch failed.", status);
+
+		std::vector<std::optional<OcrResult>> results;
+		results.reserve(result_owners.size());
+
+		for (const auto& result_owner : result_owners) {
+			if (!result_owner) {
+				results.push_back(std::nullopt);
+
+				continue;
+			}
+
+			const screenai_ocr_result_view* result_view = screenai_ocr_result_get_view(
+				result_owner.get()
+			);
+
+			if (!result_view)
+				throw Error("Could not read an OCR batch result.");
+
+			results.push_back(this->CopyResult(*result_view));
+		}
+
+		return results;
 	}
 
-	OcrResult RecognizePixelsResult(
+	OcrResult RecognizePixels(
 		const uint8_t* pixels,
 		size_t pixel_buffer_size,
 		uint32_t width,
@@ -132,7 +184,7 @@ public:
 		screenai_ocr_result* raw_result = nullptr;
 		char error[1024]{};
 
-		const screenai_status status = screenai_recognize_pixels_result(
+		const screenai_status status = screenai_recognize_pixels(
 			this->recognizer_,
 			pixels,
 			pixel_buffer_size,
@@ -151,7 +203,7 @@ public:
 		);
 
 		if (status != SCREENAI_STATUS_OK)
-			throw Error(error[0] ? error : "OCR failed.");
+			throw Error(error[0] ? error : "OCR failed.", status);
 
 		const screenai_ocr_result_view* result_view = screenai_ocr_result_get_view(result_owner.get());
 

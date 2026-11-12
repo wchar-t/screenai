@@ -3,7 +3,7 @@ import sys
 from PIL import Image
 
 from screenai import Recognizer
-from screenai.pil import recognize_pil_result
+from screenai.pil import recognize_pil
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     with Recognizer() as recognizer:
         image = Image.open(sys.argv[1])
 
-        result = recognize_pil_result(recognizer, image)
+        result = recognize_pil(recognizer, image)
 
         print(result.text)
 

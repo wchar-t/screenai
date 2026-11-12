@@ -3,22 +3,103 @@
 #include "backend/chrome_screen_ai/chrome_backend.h"
 #include "core/recognizer.h"
 #include "image/wic_decoder.h"
+#include "api/worker_process.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
 struct screenai_recognizer {
-	screenai_recognizer()
-		: implementation(std::make_unique<screenai::core::Recognizer>()) {}
+	explicit screenai_recognizer(uint32_t batch_worker_count)
+		: implementation(std::make_unique<screenai::core::Recognizer>()) {
+		this->worker_processes.reserve(batch_worker_count - 1);
+
+		for (uint32_t worker_index = 1; worker_index < batch_worker_count; ++worker_index)
+			this->worker_processes.push_back(std::make_unique<screenai::api::WorkerProcess>());
+	}
+
+	std::vector<std::optional<screenai::core::OcrResult>> RecognizeBatch(
+		const std::vector<std::wstring>& image_paths
+	) {
+		std::vector<std::optional<screenai::core::OcrResult>> results(image_paths.size());
+
+		if (image_paths.empty())
+			return results;
+
+		if (this->worker_processes.empty()) {
+			for (size_t image_index = 0; image_index < image_paths.size(); ++image_index) {
+				if (image_paths[image_index].empty())
+					continue;
+
+				try {
+					results[image_index] = this->implementation->RecognizeFile(image_paths[image_index]);
+				} catch (...) {
+				}
+			}
+
+			return results;
+		}
+
+		const size_t worker_count = (std::min)(
+			image_paths.size(),
+			this->worker_processes.size() + 1
+		);
+		std::atomic<size_t> next_image_index = 0;
+		std::vector<std::thread> workers;
+		workers.reserve(worker_count);
+
+		try {
+			for (size_t worker_index = 0; worker_index < worker_count; ++worker_index) {
+				workers.emplace_back([this, &image_paths, &results, &next_image_index, worker_index]() {
+					while (true) {
+						const size_t image_index = next_image_index.fetch_add(1);
+
+						if (image_index >= image_paths.size())
+							return;
+
+						if (image_paths[image_index].empty())
+							continue;
+
+						try {
+							if (worker_index == 0) {
+								results[image_index] = this->implementation->RecognizeFile(
+									image_paths[image_index]
+								);
+							} else {
+								results[image_index] = this->worker_processes[worker_index - 1]->RecognizeFile(
+									image_paths[image_index]
+								);
+							}
+						} catch (...) {
+							// Leave this slot empty and continue processing the batch.
+						}
+					}
+				});
+			}
+		} catch (...) {
+			for (std::thread& worker : workers)
+				worker.join();
+
+			throw;
+		}
+
+		for (std::thread& worker : workers)
+			worker.join();
+
+		return results;
+	}
 
 	std::unique_ptr<screenai::core::Recognizer> implementation;
+	std::vector<std::unique_ptr<screenai::api::WorkerProcess>> worker_processes;
 	std::mutex mutex;
 };
 
@@ -115,67 +196,6 @@ void SetError(char* output, size_t capacity, const std::string& message) noexcep
 }
 
 
-screenai_status CopyText(
-	std::string_view text,
-	char** output,
-	size_t* output_length,
-	char* error_message,
-	size_t error_capacity
-) {
-	if (!output || !output_length) {
-		SetError(error_message, error_capacity, "Output text pointers are required.");
-
-		return SCREENAI_STATUS_INVALID_ARGUMENT;
-	}
-
-	*output = nullptr;
-	*output_length = 0;
-
-	char* buffer = new (std::nothrow) char[text.size() + 1];
-	if (!buffer) {
-		SetError(error_message, error_capacity, "Could not allocate the OCR result buffer.");
-
-		return SCREENAI_STATUS_OUT_OF_MEMORY;
-	}
-
-	std::memcpy(buffer, text.data(), text.size());
-	buffer[text.size()] = '\0';
-	*output = buffer;
-	*output_length = text.size();
-
-	return SCREENAI_STATUS_OK;
-}
-
-
-screenai_status CopyResultText(
-	screenai_ocr_result* result,
-	char** output,
-	size_t* output_length,
-	char* error_message,
-	size_t error_capacity
-) {
-	std::unique_ptr<screenai_ocr_result, decltype(&screenai_ocr_result_destroy)> result_owner(
-		result,
-		&screenai_ocr_result_destroy
-	);
-	const screenai_ocr_result_view* result_view = screenai_ocr_result_get_view(result_owner.get());
-
-	if (!result_view) {
-		SetError(error_message, error_capacity, "Could not read the OCR result.");
-
-		return SCREENAI_STATUS_INTERNAL_ERROR;
-	}
-
-	return CopyText(
-		std::string_view(result_view->text, result_view->text_length),
-		output,
-		output_length,
-		error_message,
-		error_capacity
-	);
-}
-
-
 screenai_status HandleProcessingError(
 	const std::exception& error,
 	screenai_status status,
@@ -192,12 +212,17 @@ screenai_status HandleProcessingError(
 extern "C" {
 
 screenai_status SCREENAI_CALL screenai_create(
+	int32_t batch_worker_count,
 	screenai_recognizer** out_recognizer,
 	char* error_message,
 	size_t error_capacity
 ) {
-	if (!out_recognizer) {
-		SetError(error_message, error_capacity, "An output recognizer pointer is required.");
+	if (!out_recognizer || batch_worker_count <= 0) {
+		SetError(
+			error_message,
+			error_capacity,
+			"A positive worker count and output pointer are required."
+		);
 
 		return SCREENAI_STATUS_INVALID_ARGUMENT;
 	}
@@ -205,13 +230,19 @@ screenai_status SCREENAI_CALL screenai_create(
 	*out_recognizer = nullptr;
 
 	try {
-		*out_recognizer = new screenai_recognizer();
+		*out_recognizer = new screenai_recognizer(
+			static_cast<uint32_t>(batch_worker_count)
+		);
 
 		return SCREENAI_STATUS_OK;
 	} catch (const std::bad_alloc&) {
 		SetError(error_message, error_capacity, "Could not allocate a recognizer.");
 
 		return SCREENAI_STATUS_OUT_OF_MEMORY;
+	} catch (const screenai::api::WorkerError& error) {
+		SetError(error_message, error_capacity, error.what());
+
+		return error.GetStatus();
 	} catch (const std::exception& error) {
 		SetError(error_message, error_capacity, error.what());
 
@@ -262,15 +293,22 @@ screenai_status SCREENAI_CALL screenai_get_max_image_dimension(
 }
 
 
-screenai_status SCREENAI_CALL screenai_recognize_file_result(
+screenai_status SCREENAI_CALL screenai_recognize(
 	screenai_recognizer* recognizer,
 	const wchar_t* image_path,
 	screenai_ocr_result** out_result,
 	char* error_message,
 	size_t error_capacity
 ) {
+	if (out_result)
+		*out_result = nullptr;
+
 	if (!recognizer || !image_path || !*image_path || !out_result) {
-		SetError(error_message, error_capacity, "Recognizer, image path, and output pointer are required.");
+		SetError(
+			error_message,
+			error_capacity,
+			"Recognizer, image path, and output pointer are required."
+		);
 
 		return SCREENAI_STATUS_INVALID_ARGUMENT;
 	}
@@ -318,46 +356,73 @@ screenai_status SCREENAI_CALL screenai_recognize_file_result(
 }
 
 
-screenai_status SCREENAI_CALL screenai_recognize_file(
+screenai_status SCREENAI_CALL screenai_recognize_batch(
 	screenai_recognizer* recognizer,
-	const wchar_t* image_path,
-	char** out_utf8_text,
-	size_t* out_text_length,
+	const wchar_t* const* image_paths,
+	size_t image_count,
+	screenai_ocr_result** out_results,
+	size_t result_capacity,
 	char* error_message,
 	size_t error_capacity
 ) {
-	if (!out_utf8_text || !out_text_length) {
-		SetError(error_message, error_capacity, "Output text pointers are required.");
+	if (!recognizer ||
+		(image_count > 0 && (!image_paths || !out_results || result_capacity < image_count))) {
+		SetError(
+			error_message,
+			error_capacity,
+			"Recognizer, input paths, and result slots are required."
+		);
 
 		return SCREENAI_STATUS_INVALID_ARGUMENT;
 	}
 
-	*out_utf8_text = nullptr;
-	*out_text_length = 0;
-	screenai_ocr_result* result = nullptr;
+	for (size_t image_index = 0; image_index < image_count; ++image_index)
+		out_results[image_index] = nullptr;
 
-	const screenai_status status = screenai_recognize_file_result(
-		recognizer,
-		image_path,
-		&result,
-		error_message,
-		error_capacity
-	);
+	try {
+		std::vector<std::wstring> path_values;
+		path_values.reserve(image_count);
 
-	if (status != SCREENAI_STATUS_OK)
-		return status;
+		for (size_t image_index = 0; image_index < image_count; ++image_index)
+			path_values.emplace_back(image_paths[image_index] ? image_paths[image_index] : L"");
 
-	return CopyResultText(
-		result,
-		out_utf8_text,
-		out_text_length,
-		error_message,
-		error_capacity
-	);
+		std::lock_guard<std::mutex> lock(recognizer->mutex);
+		const std::vector<std::optional<screenai::core::OcrResult>> results =
+			recognizer->RecognizeBatch(path_values);
+		std::vector<std::unique_ptr<screenai_ocr_result>> result_owners(image_count);
+
+		for (size_t image_index = 0; image_index < results.size(); ++image_index) {
+			if (results[image_index]) {
+				result_owners[image_index] = std::make_unique<screenai_ocr_result>(
+					std::move(*results[image_index])
+				);
+			}
+		}
+
+		for (size_t image_index = 0; image_index < image_count; ++image_index)
+			out_results[image_index] = result_owners[image_index].release();
+
+		return SCREENAI_STATUS_OK;
+	} catch (const std::bad_alloc&) {
+		SetError(error_message, error_capacity, "Could not allocate the OCR batch results.");
+
+		return SCREENAI_STATUS_OUT_OF_MEMORY;
+	} catch (const std::exception& error) {
+		return HandleProcessingError(
+			error,
+			SCREENAI_STATUS_INTERNAL_ERROR,
+			error_message,
+			error_capacity
+		);
+	} catch (...) {
+		SetError(error_message, error_capacity, "Unknown error while processing the image batch.");
+
+		return SCREENAI_STATUS_INTERNAL_ERROR;
+	}
 }
 
 
-screenai_status SCREENAI_CALL screenai_recognize_pixels_result(
+screenai_status SCREENAI_CALL screenai_recognize_pixels(
 	screenai_recognizer* recognizer,
 	const uint8_t* pixels,
 	size_t pixel_buffer_size,
@@ -369,6 +434,9 @@ screenai_status SCREENAI_CALL screenai_recognize_pixels_result(
 	char* error_message,
 	size_t error_capacity
 ) {
+	if (out_result)
+		*out_result = nullptr;
+
 	if (!recognizer || !pixels || !out_result) {
 		SetError(error_message, error_capacity, "Recognizer, pixels, and output pointer are required.");
 
@@ -385,8 +453,6 @@ screenai_status SCREENAI_CALL screenai_recognize_pixels_result(
 
 		return SCREENAI_STATUS_INVALID_ARGUMENT;
 	}
-
-	*out_result = nullptr;
 
 	try {
 		std::lock_guard<std::mutex> lock(recognizer->mutex);
@@ -450,58 +516,5 @@ void SCREENAI_CALL screenai_ocr_result_destroy(screenai_ocr_result* result) {
 	delete result;
 }
 
-
-screenai_status SCREENAI_CALL screenai_recognize_pixels(
-	screenai_recognizer* recognizer,
-	const uint8_t* pixels,
-	size_t pixel_buffer_size,
-	uint32_t width,
-	uint32_t height,
-	uint32_t stride,
-	screenai_pixel_format pixel_format,
-	char** out_utf8_text,
-	size_t* out_text_length,
-	char* error_message,
-	size_t error_capacity
-) {
-	if (!out_utf8_text || !out_text_length) {
-		SetError(error_message, error_capacity, "Output text pointers are required.");
-
-		return SCREENAI_STATUS_INVALID_ARGUMENT;
-	}
-
-	*out_utf8_text = nullptr;
-	*out_text_length = 0;
-	screenai_ocr_result* result = nullptr;
-
-	const screenai_status status = screenai_recognize_pixels_result(
-		recognizer,
-		pixels,
-		pixel_buffer_size,
-		width,
-		height,
-		stride,
-		pixel_format,
-		&result,
-		error_message,
-		error_capacity
-	);
-
-	if (status != SCREENAI_STATUS_OK)
-		return status;
-
-	return CopyResultText(
-		result,
-		out_utf8_text,
-		out_text_length,
-		error_message,
-		error_capacity
-	);
-}
-
-
-void SCREENAI_CALL screenai_free_buffer(char* buffer) {
-	delete[] buffer;
-}
 
 } // extern "C"

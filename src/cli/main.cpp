@@ -160,7 +160,7 @@ int wmain(int argc, wchar_t** argv) {
 	try {
 		screenai::Recognizer recognizer;
 
-		const screenai::OcrResult result = recognizer.RecognizeFileResult(image_path);
+		const screenai::OcrResult result = recognizer.Recognize(image_path);
 
 		if (json_output) {
 			WriteJsonResult(std::cout, result);
