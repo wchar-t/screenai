@@ -1,5 +1,6 @@
 #include "backend/chrome_screen_ai/model_files.h"
 
+#include "backend/chrome_screen_ai/runtime_config.h"
 #include "backend/chrome_screen_ai/runtime_package.h"
 
 #include <cstdint>
@@ -7,6 +8,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace screenai::backend::model_files {
 namespace {
@@ -55,6 +58,32 @@ const runtime_package::AssetView* FindPackagedModel(
 	return asset;
 }
 
+
+bool IsRecognizerConfig(const char* name) {
+	if (!name)
+		return false;
+
+	constexpr std::string_view SUFFIX = "gocr_mobile_und_config.pb";
+	const std::string_view path(name);
+
+	return path.size() >= SUFFIX.size() &&
+		path.substr(path.size() - SUFFIX.size()) == SUFFIX;
+}
+
+
+const std::vector<uint8_t>& GetPatchedRecognizerConfig(
+	const runtime_package::AssetView& asset
+) {
+	static const std::vector<uint8_t> patched = runtime_config::PatchRecognizerConfig(
+		reinterpret_cast<const uint8_t*>(asset.data),
+		asset.size,
+		SCREENAI_INTERPRETER_THREADS,
+		SCREENAI_CHUNKS_PER_BATCH
+	);
+
+	return patched;
+}
+
 } // namespace
 
 
@@ -101,6 +130,9 @@ uint32_t GetModelSize(const char* name) {
 		const std::shared_ptr<const runtime_package::Package> package = GetRuntimePackage();
 		const runtime_package::AssetView* asset = FindPackagedModel(package, name);
 
+		if (IsRecognizerConfig(name))
+			return static_cast<uint32_t>(GetPatchedRecognizerConfig(*asset).size());
+
 		return asset->size;
 	} catch (const std::exception& error) {
 		RecordError(error.what());
@@ -122,6 +154,19 @@ void ReadModel(const char* name, uint32_t capacity, char* output) {
 	try {
 		const std::shared_ptr<const runtime_package::Package> package = GetRuntimePackage();
 		const runtime_package::AssetView* asset = FindPackagedModel(package, name);
+
+		if (IsRecognizerConfig(name)) {
+			const std::vector<uint8_t>& patched = GetPatchedRecognizerConfig(*asset);
+
+			if (patched.size() > capacity)
+				throw std::runtime_error(
+					"The patched ScreenAI recognizer config did not fit its requested buffer."
+				);
+
+			std::memcpy(output, patched.data(), patched.size());
+
+			return;
+		}
 
 		if (asset->size > capacity)
 			throw std::runtime_error("ScreenAI model file size did not match its requested buffer.");

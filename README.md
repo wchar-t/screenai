@@ -30,6 +30,15 @@ Plain text is the default output. `--json` returns the recognized text, processe
 
 The API returns an `OcrResult` containing recognized text as UTF-8. The runtime accepts one active recognizer per process. Batch calls use persistent worker processes when configured with more than one worker.
 
+## Performance
+
+The SDK rewrites two scheduling fields in the recognizer config before `chrome_screen_ai.dll` loads it. The values are compile-time constants in `src/backend/chrome_screen_ai/runtime_config.h`:
+
+- `SCREENAI_INTERPRETER_THREADS` (default 6): TFLite/XNNPACK threads per process. Higher values reduce single-image latency and use more CPU.
+- `SCREENAI_CHUNKS_PER_BATCH` (default 64): line chunks per recognizer invocation. Higher values amortize the per-invocation overhead; too high increases memory.
+
+The model and OCR output are unchanged. See `docs/performance.md` for the measured latency, batch throughput, and the interaction with `batch_worker_count`.
+
 ## Use from C++
 
 Include `screenai/screenai.hpp`, link against the generated `screenai.lib`, and keep `screenai.dll` beside the application or on the DLL search path. Include the required `runtime` folder beside the DLL. For `Recognizer` instances with `batch_worker_count` greater than one, keep the built `screenai_worker.exe` beside the DLL; it hosts the persistent OCR worker processes.
